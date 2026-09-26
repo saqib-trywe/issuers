@@ -36,9 +36,11 @@ jobs:
         run: cargo fmt --all --check
 
       # `--all-targets` so tests are linted too, `-D warnings` because a
-      # warning nobody fails on is a warning nobody reads.
+      # warning nobody fails on is a warning nobody reads. `--locked` so a
+      # stale lock file fails here rather than being re-resolved into a `gpui`
+      # commit nobody tested — the same reason `install.sh` uses it.
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
