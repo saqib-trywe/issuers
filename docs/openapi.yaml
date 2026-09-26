@@ -289,8 +289,9 @@ paths:
                 $ref: '#/components/schemas/Issue'
         '400':
           description: >
-            An unknown Status or Priority, an unusable Tag name, a field this
-            endpoint does not know, a malformed body, or `parent_id` — which
+            A blank title, an unknown Status or Priority, an unusable Tag
+            name, a field this endpoint does not know, a malformed body, or
+            `parent_id` — which
             is refused with a pointer to the sub-issue endpoints rather than
             ignored, since a caller who thought they had moved an Issue would
             otherwise have no way to tell they had not.
@@ -750,6 +751,7 @@ components:
       properties:
         title:
           type: string
+          description: Trimmed. Must not be blank, as at creation.
         body:
           type: string
         status:

@@ -694,11 +694,11 @@ impl IssueTracker {
         }
     }
 
-    /// Writes the title and body inputs through to the shared store.
+    /// Writes the title, body and size inputs through to the shared store.
     ///
     /// Takes `&mut App` rather than `Context<Self>` so it can also run from
     /// `on_release`, where the entity is being torn down and no `Context`
-    /// exists. Only these two fields are named, so this can never clobber a
+    /// exists. Only these three fields are named, so this can never clobber a
     /// Status or a Tag that something else set in the meantime.
     fn write_edits(&mut self, id: IssueId, cx: &mut App) {
         self.save_task = None;

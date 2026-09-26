@@ -212,10 +212,19 @@ fn patch_issue(id: IssueId, request: &Request, projection: &mut Projection) -> R
             ),
         );
     }
-    let patch = match body.into_patch() {
+    let mut patch = match body.into_patch() {
         Ok(patch) => patch,
         Err(err) => return Response::error(400, err),
     };
+    // Held to the rule `POST` is. The window can blank a title, because
+    // auto-save lands while you delete one to retype it; nothing that comes
+    // through here is mid-keystroke.
+    if let Some(title) = patch.title.as_mut() {
+        *title = title.trim().to_string();
+        if title.is_empty() {
+            return Response::error(400, "title must not be blank");
+        }
+    }
 
     written(projection.patch(id, patch), projection)
 }
@@ -390,6 +399,23 @@ mod tests {
             400
         );
         assert_eq!(send(&mut p, "POST", "/issues", "{}").status, 400);
+    }
+
+    /// The same rule by the other door. The window may hold a blank title
+    /// while you retype one, but nothing out here is mid-keystroke.
+    #[test]
+    fn a_title_cannot_be_patched_blank_and_is_trimmed_like_a_new_one() {
+        let mut p = projection();
+        let id = p.create("kept", IssuePatch::default(), None).unwrap().id;
+        let path = format!("/issues/{id}");
+
+        let blank = send(&mut p, "PATCH", &path, r#"{"title":"  "}"#);
+        assert_eq!(blank.status, 400);
+        assert_eq!(p.get(id).unwrap().title, "kept");
+
+        let padded = send(&mut p, "PATCH", &path, r#"{"title":"  renamed "}"#);
+        assert_eq!(padded.status, 200);
+        assert_eq!(p.get(id).unwrap().title, "renamed");
     }
 
     /// The failure the CLI's `finish()` and the MCP server's

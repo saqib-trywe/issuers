@@ -280,6 +280,14 @@ fn new(mut args: pico_args::Arguments) -> Result<Command, Failure> {
 
 fn set(mut args: pico_args::Arguments) -> Result<Command, Failure> {
     let title = value(&mut args, "--title")?;
+    // The API would refuse it too; saying so here makes it a bad command line
+    // (exit 2), as it is for `issue new`, rather than a failed request.
+    if title
+        .as_deref()
+        .is_some_and(|title| title.trim().is_empty())
+    {
+        return Err(Failure::usage("--title must not be blank"));
+    }
     let body = body(&mut args)?;
     let status = value(&mut args, "--status")?
         .map(|raw| parse_as::<Status>(&raw))
@@ -590,6 +598,13 @@ mod tests {
     fn a_blank_title_is_refused_before_the_request() {
         assert!(usage("new").contains("wants 1"));
         assert!(parse(["new", "   "].iter().map(OsString::from).collect()).is_err());
+        let blank = parse(
+            ["set", "7", "--title", "   "]
+                .iter()
+                .map(OsString::from)
+                .collect(),
+        );
+        assert!(matches!(blank, Err(Failure::Usage(message)) if message.contains("blank")));
     }
 
     #[test]
