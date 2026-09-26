@@ -30,6 +30,13 @@ info:
     client that sends one is told what went wrong instead of being told its
     `title` was missing.
 
+    Any request may be answered `503` without being attempted: when more than
+    sixteen connections are already open, when the app is quitting, or when
+    the window's thread has not got to it within thirty seconds. A `503`
+    always means **nothing was changed**, so it is safe to retry. A request
+    the app has started on is always answered with its real outcome, however
+    long that takes.
+
     ## Finding the server
 
     The port and token are published to `api.json`, beside the database, mode

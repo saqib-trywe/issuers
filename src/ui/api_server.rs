@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::thread;
 use std::time::Duration;
@@ -42,13 +42,50 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// what a client can make us buffer before we have even parsed the headers.
 const MAX_REQUEST: usize = (1 << 20) + (64 * 1024);
 
-/// How long a connection thread waits for the main thread to answer.
+/// How long a connection thread waits for the main thread to *start* on its
+/// request. Once started, the answer is waited for however long it takes,
+/// because by then giving up could only misreport what happened.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One request, and somewhere to put the answer.
 struct Job {
     request: Request,
     reply: SyncSender<Response>,
+    claim: Arc<Claim>,
+}
+
+/// Who gets to decide a request's fate once it has been queued: the main
+/// thread by answering it, or the connection thread by giving up on it.
+///
+/// Exactly one of them wins. Without this a connection that timed out told
+/// its caller the request had failed while the job stayed queued, so a write
+/// could land *after* the caller had been told it did not — and a retry would
+/// then do it twice.
+#[derive(Default)]
+struct Claim(AtomicU8);
+
+impl Claim {
+    const PENDING: u8 = 0;
+    const TAKEN: u8 = 1;
+    const ABANDONED: u8 = 2;
+
+    /// The main thread's half: `true` means handle the job, `false` means the
+    /// caller has already been told nothing happened, so nothing may.
+    fn take(&self) -> bool {
+        self.settle(Self::TAKEN)
+    }
+
+    /// The connection thread's half: `true` means the job will never run,
+    /// `false` means it is already running and its answer is on the way.
+    fn abandon(&self) -> bool {
+        self.settle(Self::ABANDONED)
+    }
+
+    fn settle(&self, to: u8) -> bool {
+        self.0
+            .compare_exchange(Self::PENDING, to, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
 }
 
 /// Binds, publishes, and starts serving. Failure is reported and survivable:
@@ -175,10 +212,25 @@ fn serve_connection(mut stream: TcpStream, sender: &async_channel::Sender<Job>) 
     let response = match read_request(&mut stream) {
         Ok(request) => {
             let (reply, answer) = sync_channel(1);
-            match sender.send_blocking(Job { request, reply }) {
-                Ok(()) => answer
-                    .recv_timeout(ANSWER_TIMEOUT)
-                    .unwrap_or_else(|_| Response::error(500, "the application did not answer")),
+            let claim = Arc::new(Claim::default());
+            let job = Job {
+                request,
+                reply,
+                claim: Arc::clone(&claim),
+            };
+            match sender.send_blocking(job) {
+                Ok(()) => match answer.recv_timeout(ANSWER_TIMEOUT) {
+                    Ok(response) => response,
+                    Err(_) if claim.abandon() => Response::error(
+                        503,
+                        "the application was too busy to answer; nothing was changed",
+                    ),
+                    // Taken just as we gave up: it is running, so its answer
+                    // is the truth and is worth the wait.
+                    Err(_) => answer.recv().unwrap_or_else(|_| {
+                        Response::error(500, "the application stopped mid-request")
+                    }),
+                },
                 Err(_) => Response::error(503, "the application is shutting down"),
             }
         }
@@ -219,6 +271,10 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, Response> {
 fn serve(api: Api, jobs: async_channel::Receiver<Job>, cx: &mut App) {
     cx.spawn(async move |cx| {
         while let Ok(job) = jobs.recv().await {
+            if !job.claim.take() {
+                // Its caller was already told nothing changed.
+                continue;
+            }
             let mutating = job.request.method != "GET";
 
             let response = cx.update(|cx| {
@@ -242,4 +298,21 @@ fn serve(api: Api, jobs: async_channel::Receiver<Job>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: that brings in `gpui::test`, which shadows `#[test]`.
+    use super::Claim;
+
+    #[test]
+    fn a_job_is_either_answered_or_abandoned_never_both() {
+        let taken = Claim::default();
+        assert!(taken.take());
+        assert!(!taken.abandon(), "a running job cannot be given up on");
+
+        let abandoned = Claim::default();
+        assert!(abandoned.abandon());
+        assert!(!abandoned.take(), "an abandoned job must not run");
+    }
 }
