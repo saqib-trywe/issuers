@@ -22,6 +22,22 @@ enum Route {
     Tags,
 }
 
+/// The path template `docs/openapi.yaml` gives each route.
+///
+/// Exhaustive on purpose: a new route is a compile error here until it is
+/// named, and the test beside `openapi.yaml`'s paths then fails until the
+/// spec describes it too.
+#[cfg(test)]
+fn template(route: &Route) -> &'static str {
+    match route {
+        Route::Issues => "/issues",
+        Route::Issue(_) => "/issues/{id}",
+        Route::IssueTag(..) => "/issues/{id}/tags/{name}",
+        Route::IssueSubIssue(..) => "/issues/{parent}/sub-issues/{child}",
+        Route::Tags => "/tags",
+    }
+}
+
 fn route(path: &str) -> Option<Route> {
     match path {
         "/issues" => return Some(Route::Issues),
@@ -1113,5 +1129,110 @@ mod tests {
             json(&response),
             serde_json::json!([{"name":"Bug","count":2},{"name":"ui","count":1}])
         );
+    }
+
+    // ---- the spec -----------------------------------------------------------
+
+    /// Every path in `docs/openapi.yaml`, with the methods it documents.
+    ///
+    /// Read by hand rather than with a YAML parser: the spec is written by
+    /// hand in one consistent shape, and this is the only thing that reads it.
+    fn documented() -> Vec<(String, Vec<String>)> {
+        let spec = include_str!("../../docs/openapi.yaml");
+        let paths = spec
+            .split_once("\npaths:\n")
+            .expect("the spec has a paths section")
+            .1;
+        let mut documented: Vec<(String, Vec<String>)> = Vec::new();
+        for line in paths.lines() {
+            // The next top-level key ends the section.
+            if !line.is_empty() && !line.starts_with(' ') {
+                break;
+            }
+            if let Some(path) = line.strip_prefix("  /").and_then(|l| l.strip_suffix(':')) {
+                documented.push((format!("/{path}"), Vec::new()));
+            } else if let Some(method) = line.strip_prefix("    ").and_then(|l| l.strip_suffix(':'))
+                && METHODS.contains(&method.to_ascii_uppercase().as_str())
+            {
+                let (_, methods) = documented.last_mut().expect("a method under a path");
+                methods.push(method.to_ascii_uppercase());
+            }
+        }
+        documented
+    }
+
+    const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+    /// A concrete path for a template, addressing things that exist.
+    fn instantiate(template: &str) -> String {
+        template
+            .replace("{id}", "1")
+            .replace("{parent}", "1")
+            .replace("{child}", "2")
+            // A slash inside, since a Tag name is the whole remainder.
+            .replace("{name}", "ui/theme")
+    }
+
+    /// The failure CLAUDE.md warns of: a route added to the code and not the
+    /// spec, or the other way about, and the spec quietly becoming fiction.
+    #[test]
+    fn the_openapi_spec_describes_exactly_the_routes_there_are() {
+        let documented = documented();
+        assert!(!documented.is_empty(), "no paths read from the spec");
+
+        // Every route is documented, and nothing documented is missing.
+        let witnesses = [
+            Route::Issues,
+            Route::Issue(1),
+            Route::IssueTag(1, "ui".into()),
+            Route::IssueSubIssue(1, 2),
+            Route::Tags,
+        ];
+        let mut in_code: Vec<&str> = witnesses.iter().map(template).collect();
+        let mut in_spec: Vec<&str> = documented.iter().map(|(path, _)| path.as_str()).collect();
+        in_code.sort_unstable();
+        in_spec.sort_unstable();
+        assert_eq!(in_code, in_spec, "routes in the code vs paths in the spec");
+
+        for (template_path, methods) in &documented {
+            let path = instantiate(template_path);
+            let reached = route(&path).unwrap_or_else(|| panic!("{path} reaches no route"));
+            assert_eq!(
+                template(&reached),
+                template_path,
+                "{path} reached another route"
+            );
+
+            for method in METHODS {
+                // Fresh each time, so a DELETE cannot change what the next
+                // method finds.
+                let mut p = projection();
+                let parent = p.create("parent", IssuePatch::default(), None).unwrap().id;
+                let child = p.create("child", IssuePatch::default(), None).unwrap().id;
+                assert_eq!((parent, child), (1, 2));
+
+                let response = send(&mut p, method, &path, "");
+                let allowed = methods.iter().any(|documented| documented == method);
+                assert_eq!(
+                    response.status != 405,
+                    allowed,
+                    "{method} {template_path}: the spec says {}, the code answered {}",
+                    if allowed { "allowed" } else { "not allowed" },
+                    response.status,
+                );
+                if response.status == 405 {
+                    let (_, allow) = response
+                        .headers
+                        .iter()
+                        .find(|(name, _)| name == "Allow")
+                        .expect("a 405 says what is allowed");
+                    let mut allow: Vec<&str> = allow.split(", ").collect();
+                    let mut documented: Vec<&str> = methods.iter().map(String::as_str).collect();
+                    allow.sort_unstable();
+                    documented.sort_unstable();
+                    assert_eq!(allow, documented, "the Allow header on {template_path}");
+                }
+            }
+        }
     }
 }
