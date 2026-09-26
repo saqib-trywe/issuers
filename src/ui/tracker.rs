@@ -920,7 +920,7 @@ impl IssueTracker {
             return;
         }
         if let Some(issue) = self.write(cx, |projection| {
-            projection.create(&title, IssuePatch::default())
+            projection.create(&title, IssuePatch::default(), None)
         }) {
             self.working.select_issue(issue.id);
             // Stay in create mode so several issues can be typed in a row.

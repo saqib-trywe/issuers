@@ -13,10 +13,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, SubsecRound, Utc};
 use rusqlite::{Connection, OptionalExtension, Row};
 
-use crate::domain::{Issue, IssueId, Priority, Status, Tag};
+use crate::domain::{Issue, IssueId, Tag};
 
 /// Points the store at a scratch database during development so experiments
 /// never touch real data.
@@ -50,6 +50,14 @@ impl Store {
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         Self::prepare(Connection::open_in_memory()?)
+    }
+
+    /// Runs raw SQL against the connection, so a test can make a write fail
+    /// at a chosen point — `PRAGMA query_only`, or a trigger that aborts.
+    /// A disk that fills or a file that locks cannot be arranged otherwise.
+    #[cfg(test)]
+    pub(crate) fn sabotage(&self, sql: &str) {
+        self.conn.execute_batch(sql).expect("sabotage SQL");
     }
 
     fn prepare(mut conn: Connection) -> Result<Self> {
@@ -99,23 +107,38 @@ impl Store {
         Ok(tags)
     }
 
-    /// Creates a title-only Issue at the default Status and Priority.
-    pub fn insert(&self, title: &str) -> Result<Issue> {
-        let now = Utc::now();
-        let issue = self.conn.query_row(
+    /// Files a new Issue with every field it is born with, returning it as
+    /// stored. The draft's `id` and timestamps are ignored: those are ours.
+    ///
+    /// One transaction for the row and its Tags, for the same reason as
+    /// [`Self::update`] — and because a create that half-landed would hand
+    /// the caller an error while leaving an Issue behind for a retry to
+    /// duplicate.
+    pub fn insert(&self, draft: &Issue) -> Result<Issue> {
+        let now = format_timestamp(Utc::now());
+        let tx = self.conn.unchecked_transaction()?;
+        let mut issue = tx.query_row(
             &format!(
-                "INSERT INTO issue (title, body, status, priority, created_at, updated_at)
-                 VALUES (?1, '', ?2, ?3, ?4, ?4)
+                "INSERT INTO issue
+                    (title, body, status, priority, created_at, updated_at, parent_id, size)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)
                  RETURNING {SELECT_COLUMNS}"
             ),
             rusqlite::params![
-                title,
-                Status::default().label(),
-                Priority::default().label(),
-                format_timestamp(now),
+                draft.title,
+                draft.body,
+                draft.status.label(),
+                draft.priority.label(),
+                now,
+                draft.parent_id,
+                draft.size,
             ],
             read_issue,
         )?;
+        write_tags(&tx, issue.id, &draft.tags)?;
+        tx.commit()?;
+
+        issue.tags = draft.tags.clone();
         Ok(issue)
     }
 
@@ -128,7 +151,10 @@ impl Store {
     /// rather than `transaction` so this keeps its `&self` signature — the
     /// callers hold an immutable borrow of the projection while writing.
     pub fn update(&self, issue: &Issue) -> Result<DateTime<Utc>> {
-        let now = Utc::now();
+        // At the precision it is stored with, so the copy in memory and the
+        // row on disk hold the same instant rather than two a nanosecond
+        // apart.
+        let now = Utc::now().trunc_subsecs(6);
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "UPDATE issue
@@ -147,19 +173,7 @@ impl Store {
             ],
         )?;
 
-        // Replace wholesale rather than diffing: the Tag set is a handful of
-        // rows, and a diff is more code and more ways to be wrong.
-        tx.execute(
-            "DELETE FROM issue_tag WHERE issue_id = ?1",
-            rusqlite::params![issue.id],
-        )?;
-        {
-            let mut insert =
-                tx.prepare("INSERT INTO issue_tag (issue_id, name) VALUES (?1, ?2)")?;
-            for tag in &issue.tags {
-                insert.execute(rusqlite::params![issue.id, tag.as_str()])?;
-            }
-        }
+        write_tags(&tx, issue.id, &issue.tags)?;
 
         tx.commit()?;
         Ok(now)
@@ -194,6 +208,23 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+/// Makes an Issue's Tag rows say exactly `tags`.
+///
+/// Replaced wholesale rather than diffed: the Tag set is a handful of rows,
+/// and a diff is more code and more ways to be wrong. Takes the transaction,
+/// because on its own it is half of a change.
+fn write_tags(tx: &rusqlite::Transaction<'_>, id: IssueId, tags: &[Tag]) -> Result<()> {
+    tx.execute(
+        "DELETE FROM issue_tag WHERE issue_id = ?1",
+        rusqlite::params![id],
+    )?;
+    let mut insert = tx.prepare("INSERT INTO issue_tag (issue_id, name) VALUES (?1, ?2)")?;
+    for tag in tags {
+        insert.execute(rusqlite::params![id, tag.as_str()])?;
+    }
+    Ok(())
 }
 
 /// Preference keys.
@@ -276,6 +307,7 @@ fn read_issue(row: &Row<'_>) -> rusqlite::Result<Issue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{Priority, Status};
 
     fn store() -> Store {
         Store::open_in_memory().expect("in-memory store")
@@ -294,7 +326,9 @@ mod tests {
 
         let id = {
             let store = Store::open_at(&path).expect("a fresh file");
-            let issue = store.insert("survives a restart").expect("insert");
+            let issue = store
+                .insert(&Issue::draft("survives a restart"))
+                .expect("insert");
             store
                 .set_setting(settings_keys::UI_VIEW, "Doing")
                 .expect("a setting");
@@ -328,7 +362,7 @@ mod tests {
     #[test]
     fn insert_defaults_to_todo_and_no_priority() {
         let store = store();
-        let issue = store.insert("Wire up the sidebar").unwrap();
+        let issue = store.insert(&Issue::draft("Wire up the sidebar")).unwrap();
 
         assert_eq!(issue.title, "Wire up the sidebar");
         assert_eq!(issue.body, "");
@@ -340,15 +374,15 @@ mod tests {
     #[test]
     fn ids_are_sequential() {
         let store = store();
-        let first = store.insert("first").unwrap();
-        let second = store.insert("second").unwrap();
+        let first = store.insert(&Issue::draft("first")).unwrap();
+        let second = store.insert(&Issue::draft("second")).unwrap();
         assert_eq!(second.id, first.id + 1);
     }
 
     #[test]
     fn inserted_issues_survive_reload() {
         let store = store();
-        store.insert("persisted").unwrap();
+        store.insert(&Issue::draft("persisted")).unwrap();
 
         let loaded = store.load_all().unwrap();
         assert_eq!(loaded.len(), 1);
@@ -358,7 +392,7 @@ mod tests {
     #[test]
     fn update_writes_every_mutable_field() {
         let store = store();
-        let mut issue = store.insert("draft").unwrap();
+        let mut issue = store.insert(&Issue::draft("draft")).unwrap();
 
         issue.title = "sharpened".into();
         issue.body = "with a body".into();
@@ -376,7 +410,7 @@ mod tests {
     #[test]
     fn update_advances_updated_at_but_not_created_at() {
         let store = store();
-        let issue = store.insert("draft").unwrap();
+        let issue = store.insert(&Issue::draft("draft")).unwrap();
 
         let updated_at = store.update(&issue).unwrap();
 
@@ -392,8 +426,8 @@ mod tests {
     #[test]
     fn delete_removes_only_its_own_issue() {
         let store = store();
-        let doomed = store.insert("typo").unwrap();
-        let kept = store.insert("real work").unwrap();
+        let doomed = store.insert(&Issue::draft("typo")).unwrap();
+        let kept = store.insert(&Issue::draft("real work")).unwrap();
 
         store.delete(doomed.id).unwrap();
 
@@ -418,7 +452,7 @@ mod tests {
     #[test]
     fn tags_survive_a_reload() {
         let store = store();
-        let mut issue = store.insert("tagged").unwrap();
+        let mut issue = store.insert(&Issue::draft("tagged")).unwrap();
         assert!(issue.tags.is_empty(), "a new Issue starts untagged");
 
         issue.tags = vec![tag("Bug"), tag("ui")];
@@ -431,7 +465,7 @@ mod tests {
     #[test]
     fn updating_replaces_the_tag_set_rather_than_adding_to_it() {
         let store = store();
-        let mut issue = store.insert("retagged").unwrap();
+        let mut issue = store.insert(&Issue::draft("retagged")).unwrap();
 
         issue.tags = vec![tag("bug"), tag("ui")];
         store.update(&issue).unwrap();
@@ -445,7 +479,7 @@ mod tests {
     #[test]
     fn clearing_every_tag_leaves_no_rows_behind() {
         let store = store();
-        let mut issue = store.insert("untagged again").unwrap();
+        let mut issue = store.insert(&Issue::draft("untagged again")).unwrap();
         issue.tags = vec![tag("bug")];
         store.update(&issue).unwrap();
 
@@ -458,8 +492,8 @@ mod tests {
     #[test]
     fn tags_belong_to_their_own_issue() {
         let store = store();
-        let mut first = store.insert("first").unwrap();
-        let mut second = store.insert("second").unwrap();
+        let mut first = store.insert(&Issue::draft("first")).unwrap();
+        let mut second = store.insert(&Issue::draft("second")).unwrap();
         first.tags = vec![tag("bug")];
         second.tags = vec![tag("ui")];
         store.update(&first).unwrap();
@@ -483,7 +517,7 @@ mod tests {
         // Relies on the foreign key cascade, which only fires because
         // `prepare` turns `foreign_keys` on.
         let store = store();
-        let mut doomed = store.insert("typo").unwrap();
+        let mut doomed = store.insert(&Issue::draft("typo")).unwrap();
         doomed.tags = vec![tag("bug"), tag("ui")];
         store.update(&doomed).unwrap();
         assert_eq!(tag_row_count(&store), 2);
@@ -496,7 +530,7 @@ mod tests {
     #[test]
     fn timestamps_round_trip_to_microsecond_precision() {
         let store = store();
-        let issue = store.insert("precise").unwrap();
+        let issue = store.insert(&Issue::draft("precise")).unwrap();
         let reloaded = store.load_all().unwrap().remove(0);
         assert_eq!(
             format_timestamp(issue.created_at),
@@ -576,7 +610,7 @@ mod tests {
     #[test]
     fn settings_do_not_disturb_issues() {
         let store = store();
-        let issue = store.insert("unaffected").unwrap();
+        let issue = store.insert(&Issue::draft("unaffected")).unwrap();
         store.set_setting("theme.light", "Ayu Light").unwrap();
 
         let issues = store.load_all().unwrap();

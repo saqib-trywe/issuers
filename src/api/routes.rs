@@ -185,34 +185,15 @@ fn create_issue(request: &Request, projection: &mut Projection) -> Response {
         Err(err) => return Response::error(400, err),
     };
 
-    // Asked before anything is written. Every reason a parent could refuse
-    // this Issue is a fact about the parent, so it is knowable now — and
-    // checking afterwards meant answering 404 to a caller who had just been
-    // given an Issue they were never told about.
-    if let Some(parent) = new.parent_id {
-        let settled = patch.status.unwrap_or_default().is_settled();
-        if let Err(err) = projection.may_hold(parent, settled) {
-            return write_error(err);
-        }
-    }
-
-    let created = match projection.create(&title, patch) {
+    // One write, parent included: a refusing or missing parent is answered
+    // before anything exists, and a failure part-way leaves no Issue behind
+    // for the caller's retry to duplicate.
+    let created = match projection.create(&title, patch, new.parent_id) {
         Ok(issue) => issue,
         Err(err) => return write_error(err),
     };
 
-    // Still routed through `set_parent` so the attach goes through exactly the
-    // checks any other attach does. It cannot refuse now: the Issue is new, so
-    // it is neither its own parent nor holding anything, and the parent was
-    // asked above.
-    if let Some(parent) = new.parent_id
-        && let Err(err) = projection.set_parent(created.id, Some(parent))
-    {
-        return write_error(err);
-    }
-
-    let issue = projection.get(created.id).expect("just created");
-    Response::json(201, &issue_json(projection, issue))
+    Response::json(201, &issue_json(projection, &created))
         .with_header("Location", format!("/issues/{}", created.id))
 }
 
@@ -478,7 +459,7 @@ mod tests {
     #[test]
     fn reading_one_issue_or_failing_to() {
         let mut p = projection();
-        let created = p.create("readable", IssuePatch::default()).unwrap();
+        let created = p.create("readable", IssuePatch::default(), None).unwrap();
 
         let found = send(&mut p, "GET", &format!("/issues/{}", created.id), "");
         assert_eq!(found.status, 200);
@@ -490,7 +471,7 @@ mod tests {
     #[test]
     fn a_patch_touches_only_what_it_names() {
         let mut p = projection();
-        let created = p.create("keep me", IssuePatch::default()).unwrap();
+        let created = p.create("keep me", IssuePatch::default(), None).unwrap();
 
         let response = send(
             &mut p,
@@ -507,7 +488,7 @@ mod tests {
     #[test]
     fn an_empty_patch_body_is_a_no_op_rather_than_an_error() {
         let mut p = projection();
-        let created = p.create("unchanged", IssuePatch::default()).unwrap();
+        let created = p.create("unchanged", IssuePatch::default(), None).unwrap();
         let response = send(&mut p, "PATCH", &format!("/issues/{}", created.id), "");
         assert_eq!(response.status, 200);
         assert_eq!(json(&response)["title"], "unchanged");
@@ -525,7 +506,7 @@ mod tests {
     #[test]
     fn deleting_is_204_then_404() {
         let mut p = projection();
-        let created = p.create("doomed", IssuePatch::default()).unwrap();
+        let created = p.create("doomed", IssuePatch::default(), None).unwrap();
         let path = format!("/issues/{}", created.id);
 
         let gone = send(&mut p, "DELETE", &path, "");
@@ -537,11 +518,12 @@ mod tests {
     #[test]
     fn listing_is_in_display_order() {
         let mut p = projection();
-        p.create("low", IssuePatch::default()).unwrap();
+        p.create("low", IssuePatch::default(), None).unwrap();
         let urgent = p
             .create(
                 "urgent",
                 IssuePatch::default().priority(crate::domain::Priority::Urgent),
+                None,
             )
             .unwrap();
 
@@ -557,9 +539,10 @@ mod tests {
             IssuePatch::default()
                 .status(Status::Doing)
                 .tags(vec!["Bug".parse().unwrap()]),
+            None,
         )
         .unwrap();
-        p.create("beta", IssuePatch::default().status(Status::Todo))
+        p.create("beta", IssuePatch::default().status(Status::Todo), None)
             .unwrap();
 
         let by_status = send(&mut p, "GET", "/issues?status=Doing", "");
@@ -707,7 +690,7 @@ mod tests {
     #[test]
     fn tags_are_added_and_removed_one_at_a_time() {
         let mut p = projection();
-        let created = p.create("taggable", IssuePatch::default()).unwrap();
+        let created = p.create("taggable", IssuePatch::default(), None).unwrap();
         let base = format!("/issues/{}/tags", created.id);
 
         let added = send(&mut p, "PUT", &format!("{base}/Bug"), "");
@@ -730,7 +713,7 @@ mod tests {
     #[test]
     fn a_tag_name_may_contain_slashes_and_spaces() {
         let mut p = projection();
-        let created = p.create("taggable", IssuePatch::default()).unwrap();
+        let created = p.create("taggable", IssuePatch::default(), None).unwrap();
         let base = format!("/issues/{}/tags", created.id);
 
         let slashed = send(&mut p, "PUT", &format!("{base}/ui/theme"), "");
@@ -746,7 +729,7 @@ mod tests {
     #[test]
     fn an_unusable_tag_name_is_a_400() {
         let mut p = projection();
-        let created = p.create("taggable", IssuePatch::default()).unwrap();
+        let created = p.create("taggable", IssuePatch::default(), None).unwrap();
         let response = send(
             &mut p,
             "PUT",
@@ -765,7 +748,7 @@ mod tests {
     // ---- sub-issues ---------------------------------------------------------
 
     fn make(p: &mut Projection, title: &str) -> crate::domain::IssueId {
-        p.create(title, IssuePatch::default()).unwrap().id
+        p.create(title, IssuePatch::default(), None).unwrap().id
     }
 
     #[test]
@@ -1089,11 +1072,13 @@ mod tests {
         p.create(
             "one",
             IssuePatch::default().tags(vec!["Bug".parse().unwrap()]),
+            None,
         )
         .unwrap();
         p.create(
             "two",
             IssuePatch::default().tags(vec!["bug".parse().unwrap(), "ui".parse().unwrap()]),
+            None,
         )
         .unwrap();
 

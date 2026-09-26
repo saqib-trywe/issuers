@@ -316,6 +316,25 @@ pub fn display_title(title: &str) -> &str {
 }
 
 impl Issue {
+    /// An Issue not yet filed: defaults everywhere but the title.
+    ///
+    /// Its `id` and timestamps are placeholders — they are the store's to
+    /// assign, and `Store::insert` ignores whatever a draft carries there.
+    pub fn draft(title: impl Into<String>) -> Self {
+        Self {
+            id: 0,
+            title: title.into(),
+            body: String::new(),
+            status: Status::default(),
+            priority: Priority::default(),
+            size: None,
+            tags: Vec::new(),
+            parent_id: None,
+            created_at: DateTime::UNIX_EPOCH,
+            updated_at: DateTime::UNIX_EPOCH,
+        }
+    }
+
     /// The title as displayed when the user hasn't typed one yet.
     pub fn display_title(&self) -> &str {
         display_title(&self.title)

@@ -169,6 +169,34 @@ impl IssuePatch {
     }
 }
 
+/// Writes a patch's fields onto an Issue, touching only those it names.
+///
+/// Shared by creating and patching, so a field means the same thing whichever
+/// of the two it arrives through. `in_use` is the corpus's Tag vocabulary,
+/// which new Tags are folded against.
+fn apply(issue: &mut Issue, patch: IssuePatch, in_use: &BTreeSet<Tag>) {
+    if let Some(title) = patch.title {
+        issue.title = title;
+    }
+    if let Some(body) = patch.body {
+        issue.body = body;
+    }
+    if let Some(status) = patch.status {
+        issue.status = status;
+    }
+    if let Some(priority) = patch.priority {
+        issue.priority = priority;
+    }
+    if let Some(tags) = patch.tags {
+        issue.tags = normalise_tags(tags, in_use);
+    }
+    // The outer `Some` says the patch mentioned Size at all; the inner one is
+    // the value, where `None` means unsize it.
+    if let Some(size) = patch.size {
+        issue.size = size;
+    }
+}
+
 /// Settled-over-total for a set of parts, or `None` when there are none.
 ///
 /// Free-standing so that [`Projection::settled_progress`] and
@@ -315,7 +343,7 @@ impl Projection {
     /// afterwards means creating an Issue in order to discover the request was
     /// refused, and answering 404 to a caller who now owns something they were
     /// never told about.
-    pub(crate) fn may_hold(
+    fn may_hold(
         &self,
         parent: IssueId,
         child_is_settled: bool,
@@ -390,21 +418,33 @@ impl Projection {
 
     // ---- writes -------------------------------------------------------------
 
-    /// Creates an Issue, then applies any other supplied fields.
+    /// Files a new Issue with any other supplied fields, under `parent` if
+    /// one is named.
     ///
-    /// The second step goes through [`Self::patch`] rather than repeating the
-    /// field logic, so a Tag arriving at creation time is folded against the
-    /// vocabulary exactly as it would be later.
-    pub fn create(&mut self, title: &str, rest: IssuePatch) -> Written<Issue> {
-        let issue = self.store.insert(title)?;
-        let id = issue.id;
-        self.issues.push(issue);
-        sort_for_display(&mut self.issues);
-
-        if !rest.is_empty() {
-            self.patch(id, rest)?;
+    /// All of it is one write, so a failure part-way leaves no Issue behind
+    /// for a retry to duplicate. The fields go through [`apply`] exactly as a
+    /// later patch's would, so a Tag arriving at creation time is folded
+    /// against the vocabulary the same way; and the parent is asked
+    /// [`Self::may_hold`] — everything an attach checks that is answerable
+    /// before the child exists, which for a child with no parts of its own is
+    /// everything.
+    pub fn create(
+        &mut self,
+        title: &str,
+        rest: IssuePatch,
+        parent: Option<IssueId>,
+    ) -> Written<Issue> {
+        let mut draft = Issue::draft(title);
+        apply(&mut draft, rest, &self.tags_in_use());
+        if let Some(parent) = parent {
+            self.may_hold(parent, draft.status.is_settled())?;
+            draft.parent_id = Some(parent);
         }
-        Ok(self.get(id).cloned().expect("just inserted"))
+
+        let issue = self.store.insert(&draft)?;
+        self.issues.push(issue.clone());
+        sort_for_display(&mut self.issues);
+        Ok(issue)
     }
 
     /// Applies a patch, returning the Issue as it now stands, or `None` when
@@ -414,53 +454,18 @@ impl Projection {
     /// move for a no-op — a keystroke that restores the previous text should
     /// not reorder the list.
     pub fn patch(&mut self, id: IssueId, patch: IssuePatch) -> Written<Issue> {
-        // Computed before the mutable borrow below, and deliberately from the
-        // whole corpus: a Tag's established spelling is a global fact.
-        let in_use = self.tags_in_use();
-        if self.get(id).is_none() {
+        let Some(current) = self.get(id) else {
             return Err(WriteError::NotFound(id));
-        }
+        };
         if let Some(status) = patch.status {
             self.check_status_change(id, status)?;
         }
 
-        let Some(issue) = self.issues.iter_mut().find(|issue| issue.id == id) else {
-            return Err(WriteError::NotFound(id));
-        };
-        let before = issue.clone();
-
-        if let Some(title) = patch.title {
-            issue.title = title;
-        }
-        if let Some(body) = patch.body {
-            issue.body = body;
-        }
-        if let Some(status) = patch.status {
-            issue.status = status;
-        }
-        if let Some(priority) = patch.priority {
-            issue.priority = priority;
-        }
-        if let Some(tags) = patch.tags {
-            issue.tags = normalise_tags(tags, &in_use);
-        }
-        // The outer `Some` says the patch mentioned Size at all; the inner one
-        // is the value, where `None` means unsize it.
-        if let Some(size) = patch.size {
-            issue.size = size;
-        }
-
-        if *issue == before {
-            return Ok(before);
-        }
-
-        let snapshot = issue.clone();
-        let updated_at = self.store.update(&snapshot)?;
-        if let Some(issue) = self.issues.iter_mut().find(|issue| issue.id == id) {
-            issue.updated_at = updated_at;
-        }
-        sort_for_display(&mut self.issues);
-        Ok(self.get(id).cloned().expect("just patched"))
+        let mut next = current.clone();
+        // Deliberately from the whole corpus: a Tag's established spelling is
+        // a global fact.
+        apply(&mut next, patch, &self.tags_in_use());
+        self.commit(next)
     }
 
     /// Guards the two directions of the completion rule.
@@ -498,23 +503,31 @@ impl Projection {
             self.may_attach(child, parent)?;
         }
 
-        let issue = self
-            .issues
-            .iter_mut()
-            .find(|issue| issue.id == child)
-            .expect("checked above");
-        if issue.parent_id == parent {
-            return Ok(issue.clone());
-        }
-        issue.parent_id = parent;
+        let mut next = self.get(child).cloned().expect("checked above");
+        next.parent_id = parent;
+        self.commit(next)
+    }
 
-        let snapshot = issue.clone();
-        let updated_at = self.store.update(&snapshot)?;
-        if let Some(issue) = self.issues.iter_mut().find(|issue| issue.id == child) {
-            issue.updated_at = updated_at;
+    /// Makes `next` the stored version of its Issue: SQLite first, and the
+    /// Vec only once that has succeeded.
+    ///
+    /// The single way an existing Issue changes. Editing the Vec in place and
+    /// writing afterwards is the ADR-0002 bug run backwards — a write the
+    /// database refused stays on screen until a restart quietly takes it away.
+    /// Returns the current version unwritten when `next` is no different, so
+    /// a no-op does not move `updated_at`.
+    fn commit(&mut self, mut next: Issue) -> Written<Issue> {
+        let Some(index) = self.issues.iter().position(|issue| issue.id == next.id) else {
+            return Err(WriteError::NotFound(next.id));
+        };
+        if self.issues[index] == next {
+            return Ok(next);
         }
+
+        next.updated_at = self.store.update(&next)?;
+        self.issues[index] = next.clone();
         sort_for_display(&mut self.issues);
-        Ok(self.get(child).cloned().expect("just moved"))
+        Ok(next)
     }
 
     /// Adds one Tag. Race-free where a read-modify-write from a caller is not:
@@ -587,7 +600,7 @@ mod tests {
     }
 
     fn filed(p: &mut Projection, title: &str) -> IssueId {
-        p.create(title, IssuePatch::default()).unwrap().id
+        p.create(title, IssuePatch::default(), None).unwrap().id
     }
 
     /// Every eligibility answer must match the refusal that would follow.
@@ -735,7 +748,7 @@ mod tests {
     #[test]
     fn create_with_no_extra_fields_matches_the_stores_defaults() {
         let mut p = projection();
-        let issue = p.create("plain", IssuePatch::default()).unwrap();
+        let issue = p.create("plain", IssuePatch::default(), None).unwrap();
 
         assert_eq!(issue.title, "plain");
         assert_eq!(issue.status, Status::Todo);
@@ -754,6 +767,7 @@ mod tests {
                     .status(Status::Doing)
                     .priority(Priority::Urgent)
                     .tags(vec![tag("Bug")]),
+                None,
             )
             .unwrap();
 
@@ -768,7 +782,7 @@ mod tests {
         // The property the whole API design rests on: a caller setting Status
         // cannot clobber a title another caller is editing.
         let mut p = projection();
-        let created = p.create("original", IssuePatch::default()).unwrap();
+        let created = p.create("original", IssuePatch::default(), None).unwrap();
 
         p.patch(created.id, IssuePatch::default().status(Status::Done))
             .unwrap();
@@ -793,7 +807,7 @@ mod tests {
     #[test]
     fn a_patch_that_changes_nothing_does_not_move_updated_at() {
         let mut p = projection();
-        let created = p.create("stable", IssuePatch::default()).unwrap();
+        let created = p.create("stable", IssuePatch::default(), None).unwrap();
 
         p.patch(created.id, IssuePatch::default().title("stable"))
             .unwrap();
@@ -804,7 +818,7 @@ mod tests {
     #[test]
     fn a_real_patch_does_move_updated_at() {
         let mut p = projection();
-        let created = p.create("moving", IssuePatch::default()).unwrap();
+        let created = p.create("moving", IssuePatch::default(), None).unwrap();
 
         p.patch(created.id, IssuePatch::default().title("moved"))
             .unwrap();
@@ -816,9 +830,9 @@ mod tests {
     fn tags_arriving_by_patch_fold_against_the_established_spelling() {
         let mut p = projection();
         let first = p
-            .create("first", IssuePatch::default().tags(vec![tag("Bug")]))
+            .create("first", IssuePatch::default().tags(vec![tag("Bug")]), None)
             .unwrap();
-        let second = p.create("second", IssuePatch::default()).unwrap();
+        let second = p.create("second", IssuePatch::default(), None).unwrap();
 
         // Lowercase on the way in; the corpus already says "Bug".
         p.patch(second.id, IssuePatch::default().tags(vec![tag("bug")]))
@@ -834,7 +848,7 @@ mod tests {
     fn adding_a_tag_leaves_the_others_alone() {
         let mut p = projection();
         let issue = p
-            .create("tagged", IssuePatch::default().tags(vec![tag("ui")]))
+            .create("tagged", IssuePatch::default().tags(vec![tag("ui")]), None)
             .unwrap();
 
         p.add_tag(issue.id, tag("Bug")).unwrap();
@@ -845,7 +859,7 @@ mod tests {
     #[test]
     fn adding_a_tag_twice_is_idempotent() {
         let mut p = projection();
-        let issue = p.create("tagged", IssuePatch::default()).unwrap();
+        let issue = p.create("tagged", IssuePatch::default(), None).unwrap();
 
         p.add_tag(issue.id, tag("Bug")).unwrap();
         p.add_tag(issue.id, tag("bug")).unwrap();
@@ -857,7 +871,7 @@ mod tests {
     fn removing_a_tag_is_case_insensitive_and_idempotent() {
         let mut p = projection();
         let issue = p
-            .create("tagged", IssuePatch::default().tags(vec![tag("Bug")]))
+            .create("tagged", IssuePatch::default().tags(vec![tag("Bug")]), None)
             .unwrap();
 
         p.remove_tag(issue.id, &tag("BUG")).unwrap();
@@ -870,7 +884,7 @@ mod tests {
     #[test]
     fn deleting_reports_whether_there_was_anything_to_delete() {
         let mut p = projection();
-        let issue = p.create("doomed", IssuePatch::default()).unwrap();
+        let issue = p.create("doomed", IssuePatch::default(), None).unwrap();
 
         p.delete(issue.id).unwrap();
         assert!(
@@ -891,11 +905,11 @@ mod tests {
 
     /// A parent with `count` sub-issues, all Todo.
     fn family(p: &mut Projection, count: usize) -> (IssueId, Vec<IssueId>) {
-        let parent = p.create("parent", IssuePatch::default()).unwrap().id;
+        let parent = p.create("parent", IssuePatch::default(), None).unwrap().id;
         let children = (0..count)
             .map(|n| {
                 let child = p
-                    .create(&format!("child {n}"), IssuePatch::default())
+                    .create(&format!("child {n}"), IssuePatch::default(), None)
                     .unwrap();
                 p.set_parent(child.id, Some(parent)).unwrap();
                 child.id
@@ -922,7 +936,10 @@ mod tests {
         // There is no separate move operation: setting the parent is one.
         let mut p = projection();
         let (first, children) = family(&mut p, 1);
-        let second = p.create("second parent", IssuePatch::default()).unwrap().id;
+        let second = p
+            .create("second parent", IssuePatch::default(), None)
+            .unwrap()
+            .id;
 
         p.set_parent(children[0], Some(second)).unwrap();
 
@@ -934,7 +951,10 @@ mod tests {
     fn hierarchy_is_one_level_deep_from_both_ends() {
         let mut p = projection();
         let (parent, children) = family(&mut p, 1);
-        let outsider = p.create("outsider", IssuePatch::default()).unwrap().id;
+        let outsider = p
+            .create("outsider", IssuePatch::default(), None)
+            .unwrap()
+            .id;
 
         // A sub-issue cannot become a parent.
         assert_eq!(
@@ -951,7 +971,7 @@ mod tests {
     #[test]
     fn an_issue_cannot_be_its_own_parent() {
         let mut p = projection();
-        let issue = p.create("lonely", IssuePatch::default()).unwrap().id;
+        let issue = p.create("lonely", IssuePatch::default(), None).unwrap().id;
         assert_eq!(
             refusal(p.set_parent(issue, Some(issue)).unwrap_err()),
             Refused::SelfParent
@@ -1046,10 +1066,17 @@ mod tests {
     fn a_cancelled_parent_takes_work_as_any_other_issue_does() {
         let mut p = projection();
         let parent = p
-            .create("abandoned", IssuePatch::default().status(Status::Cancelled))
+            .create(
+                "abandoned",
+                IssuePatch::default().status(Status::Cancelled),
+                None,
+            )
             .unwrap()
             .id;
-        let open = p.create("still wanted", IssuePatch::default()).unwrap().id;
+        let open = p
+            .create("still wanted", IssuePatch::default(), None)
+            .unwrap()
+            .id;
 
         assert!(p.set_parent(open, Some(parent)).is_ok());
         assert!(
@@ -1063,12 +1090,12 @@ mod tests {
     fn a_done_parent_will_not_take_on_outstanding_work() {
         let mut p = projection();
         let parent = p
-            .create("done", IssuePatch::default().status(Status::Done))
+            .create("done", IssuePatch::default().status(Status::Done), None)
             .unwrap()
             .id;
-        let open = p.create("open", IssuePatch::default()).unwrap().id;
+        let open = p.create("open", IssuePatch::default(), None).unwrap().id;
         let closed = p
-            .create("closed", IssuePatch::default().status(Status::Done))
+            .create("closed", IssuePatch::default().status(Status::Done), None)
             .unwrap()
             .id;
 
@@ -1143,7 +1170,7 @@ mod tests {
     fn candidate_lists_exclude_what_would_be_refused() {
         let mut p = projection();
         let (parent, children) = family(&mut p, 1);
-        let loose = p.create("loose", IssuePatch::default()).unwrap().id;
+        let loose = p.create("loose", IssuePatch::default(), None).unwrap().id;
 
         let candidates: Vec<IssueId> = p
             .eligible_sub_issues(parent)
@@ -1168,13 +1195,117 @@ mod tests {
     #[test]
     fn issues_are_kept_in_display_order() {
         let mut p = projection();
-        p.create("low", IssuePatch::default().priority(Priority::Low))
+        p.create("low", IssuePatch::default().priority(Priority::Low), None)
             .unwrap();
         let urgent = p
-            .create("urgent", IssuePatch::default().priority(Priority::Urgent))
+            .create(
+                "urgent",
+                IssuePatch::default().priority(Priority::Urgent),
+                None,
+            )
             .unwrap();
 
         assert_eq!(p.issues()[0].id, urgent.id);
+    }
+
+    /// The Issues as SQLite has them, which is what a restart would show.
+    fn on_disk(p: &Projection) -> Vec<Issue> {
+        let mut issues = p.store.load_all().unwrap();
+        sort_for_display(&mut issues);
+        issues
+    }
+
+    #[test]
+    fn a_patch_the_store_refuses_leaves_memory_untouched() {
+        // ADR-0002 from the other side: a change the database never took must
+        // not be shown either, or it is on screen until a restart erases it.
+        let mut p = projection();
+        let id = filed(&mut p, "before");
+        p.store.sabotage("PRAGMA query_only = ON;");
+
+        let err = p
+            .patch(
+                id,
+                IssuePatch::default().title("after").tags(vec![tag("ui")]),
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, WriteError::Store(_)));
+        assert_eq!(p.get(id).unwrap().title, "before");
+        assert!(p.get(id).unwrap().tags.is_empty());
+        assert_eq!(p.issues(), on_disk(&p).as_slice());
+    }
+
+    #[test]
+    fn an_attach_the_store_refuses_leaves_memory_untouched() {
+        let mut p = projection();
+        let parent = filed(&mut p, "parent");
+        let child = filed(&mut p, "child");
+        p.store.sabotage("PRAGMA query_only = ON;");
+
+        let err = p.set_parent(child, Some(parent)).unwrap_err();
+
+        assert!(matches!(err, WriteError::Store(_)));
+        assert_eq!(p.get(child).unwrap().parent_id, None);
+        assert!(p.sub_issues(parent).is_empty());
+        assert_eq!(p.issues(), on_disk(&p).as_slice());
+    }
+
+    #[test]
+    fn a_create_that_fails_part_way_files_nothing() {
+        // The row is written before its Tags, so failing on the Tags is the
+        // half-written case: nothing at all may survive it.
+        let mut p = projection();
+        p.store.sabotage(
+            "CREATE TEMP TRIGGER no_tags BEFORE INSERT ON issue_tag
+             BEGIN SELECT RAISE(ABORT, 'sabotaged'); END;",
+        );
+
+        let err = p
+            .create("tagged", IssuePatch::default().tags(vec![tag("ui")]), None)
+            .unwrap_err();
+
+        assert!(matches!(err, WriteError::Store(_)));
+        assert!(p.issues().is_empty());
+        assert!(on_disk(&p).is_empty());
+    }
+
+    #[test]
+    fn a_create_under_a_parent_is_filed_there_in_one_step() {
+        let mut p = projection();
+        let parent = filed(&mut p, "parent");
+
+        let child = p
+            .create("child", IssuePatch::default(), Some(parent))
+            .unwrap();
+
+        assert_eq!(child.parent_id, Some(parent));
+        assert_eq!(child.created_at, child.updated_at, "one write, not two");
+        assert_eq!(p.issues(), on_disk(&p).as_slice());
+    }
+
+    #[test]
+    fn a_create_under_a_refusing_parent_files_nothing() {
+        let mut p = projection();
+        let parent = p
+            .create("done", IssuePatch::default().status(Status::Done), None)
+            .unwrap()
+            .id;
+
+        let err = p
+            .create("open work", IssuePatch::default(), Some(parent))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            WriteError::Refused(Refused::ParentAlreadyDone(id)) if id == parent
+        ));
+        assert_eq!(p.issues().len(), 1);
+        assert!(matches!(
+            p.create("orphan", IssuePatch::default(), Some(404)),
+            Err(WriteError::NotFound(404))
+        ));
+        assert_eq!(on_disk(&p).len(), 1);
     }
 
     #[test]
@@ -1188,6 +1319,7 @@ mod tests {
                 IssuePatch::default()
                     .status(Status::Blocked)
                     .tags(vec![tag("ui")]),
+                None,
             )
             .unwrap();
 

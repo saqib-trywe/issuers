@@ -151,7 +151,9 @@ paths:
         means "no parent", which is the ambiguity that keeps it out of `PATCH`.
         Every reason a parent could refuse is a fact about the parent, so it is
         checked *before* anything is written: a refused create files nothing,
-        and a retry cannot leave two Issues behind.
+        and a retry cannot leave two Issues behind. The Issue, its Tags and its
+        parent are then one write, so a create that fails part-way files
+        nothing either.
 
         A field this endpoint does not know is refused rather than ignored. A
         misspelt one answering `201` and quietly dropping what it carried is
