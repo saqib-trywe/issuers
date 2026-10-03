@@ -7,7 +7,7 @@
 //! thread per connection. GPUI's executor has no I/O reactor, and the API is a
 //! handful of endpoints on loopback — this is the same shape Zed uses for its
 //! own in-process HTTP server. Nothing here decides anything; parsing,
-//! authenticating and routing all live in `issue_tracker::api`, which is testable
+//! authenticating and routing all live in `issuers::api`, which is testable
 //! without a socket. See `docs/adr/0006`.
 
 use std::io::{Read, Write};
@@ -23,8 +23,8 @@ use anyhow::{Context as _, Result};
 use gpui::*;
 
 use crate::app_state;
-use issue_tracker::api::{Api, Parsed, Request, Response, parse};
-use issue_tracker::store;
+use issuers::api::{Api, Parsed, Request, Response, parse};
+use issuers::store;
 
 /// Tried first, so `curl localhost:8787/issues` works without reading a file.
 /// An ephemeral port is used when something else already has it.
@@ -120,7 +120,7 @@ pub fn start(cx: &mut App) {
     })
     .detach();
 
-    eprintln!("issue API listening on http://127.0.0.1:{port}");
+    eprintln!("Issuers API listening on http://127.0.0.1:{port}");
 }
 
 fn bind() -> Result<(TcpListener, u16)> {

@@ -11,7 +11,7 @@
 
 use std::str::FromStr;
 
-use issue_tracker::domain::{IssueId, Priority, Size, Status};
+use issuers::domain::{IssueId, Priority, Size, Status};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
 use serde::de::{Error as _, Unexpected};

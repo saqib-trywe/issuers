@@ -1,17 +1,17 @@
 [package]
-name = "issue-mcp"
+name = "issuers-mcp"
 version = "0.1.1"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "A Model Context Protocol server for the Issues tracker"
+description = "A Model Context Protocol server for the Issuers tracker"
 
 [[bin]]
-name = "issue-mcp"
+name = "issuers-mcp"
 path = "src/main.rs"
 
 [dependencies]
 # The library half of the tracker: the HTTP client and the domain types.
-issue-tracker = { path = "../.." }
+issuers = { path = "../.." }
 
 # `server` and `macros` are on by default; `transport-io` is what gives stdio.
 rmcp = { version = "3.2", features = ["transport-io"] }

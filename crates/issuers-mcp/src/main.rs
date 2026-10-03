@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! `issue-mcp` — the Model Context Protocol surface of the Issues tracker.
+//! `issuers-mcp` — the Model Context Protocol surface of the Issuers tracker.
 //!
 //! A separate process that speaks MCP on stdio and reaches the running app
 //! through its local HTTP API. It is a client, never a second writer: the app

@@ -13,8 +13,8 @@
 //! Working state is per window, as `docs/adr/0005` requires, which is why it
 //! lives here rather than in the shared library.
 
-use issue_tracker::domain::{Issue, IssueId, Narrowing, Tag, View};
-use issue_tracker::store::settings_keys;
+use issuers::domain::{Issue, IssueId, Narrowing, Tag, View};
+use issuers::store::settings_keys;
 
 /// What changed, for the caller to act on.
 ///
@@ -205,7 +205,7 @@ impl WorkingState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use issue_tracker::domain::{Priority, Status};
+    use issuers::domain::{Priority, Status};
     use std::collections::HashMap;
 
     fn issue(id: IssueId, title: &str, status: Status, tags: &[&str]) -> Issue {

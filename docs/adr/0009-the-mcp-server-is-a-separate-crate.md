@@ -1,11 +1,11 @@
 # The MCP server is a separate crate
 
-`issue-mcp` is a workspace member building its own binary. It speaks the Model
+`issuers-mcp` is a workspace member building its own binary. It speaks the Model
 Context Protocol on stdio, using the `rmcp` SDK, and reaches the tracker
-through the local HTTP API — a client of the running app, exactly as `issue`
+through the local HTTP API — a client of the running app, exactly as `issuers-cli`
 is, for exactly the reasons in ADR-0008.
 
-It could not have lived inside `Issues`. An MCP stdio server must own stdin and
+It could not have lived inside `Issuers`. An MCP stdio server must own stdin and
 stdout, which an app launched from the Dock does not have, and `rmcp` requires
 tokio, which cannot share a process with GPUI's executor. But even where the
 choice was open it went the same way: keeping the agent surface out of the app
@@ -33,7 +33,7 @@ when a client upgraded.
 **A third `[[bin]]` in the existing package** was rejected because binaries in
 one package share one dependency table, so `rmcp` and tokio would be compiled
 on every build of this repo — and any code under `src/` would sit in the
-`issue_tracker` library, whose whole value is that nothing heavy can get into
+`issuers` library, whose whole value is that nothing heavy can get into
 it. An async runtime there is the same erosion as a `use gpui`.
 
 ## Consequences
@@ -67,8 +67,8 @@ calling `update_issue` with `tags` would be told it succeeded and nothing would
 change — the same trap `pico-args` sets for the CLI, which is why every command
 there ends in a `finish()` check.
 
-`issue-mcp` depends on the root package for the client and the domain types,
-and the root package depends on GPUI. So `cargo install --path crates/issue-mcp`
+`issuers-mcp` depends on the root package for the client and the domain types,
+and the root package depends on GPUI. So `cargo install --path crates/issuers-mcp`
 compiles the whole GPUI tree to produce a binary that never links it. Nothing
 is wrong with the result, but it is slow on a fresh machine. Making the GUI
 dependencies optional behind a default-on feature, or moving the library into

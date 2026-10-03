@@ -8,7 +8,7 @@
 
 use gpui::{App, Entity, Global};
 
-use issue_tracker::projection::Projection;
+use issuers::projection::Projection;
 
 struct GlobalProjection(Entity<Projection>);
 

@@ -11,7 +11,7 @@ use gpui_component::{ActiveTheme, Side, Sizable};
 
 use super::tag_colour::colour_for;
 use super::tracker::{IssueTracker, LIST_CONTEXT};
-use issue_tracker::domain::{IssueId, Priority, SizeRollup, Status, Tag};
+use issuers::domain::{IssueId, Priority, SizeRollup, Status, Tag};
 
 impl IssueTracker {
     pub(super) fn render_issue_list(

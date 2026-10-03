@@ -9,7 +9,7 @@
 //! the difference between a tool error and a protocol error.
 //!
 //! It is one `#[test]` per scenario, each with its own directory, because
-//! `ISSUE_TRACKER_DB` is per-process and the process here is a child.
+//! `ISSUERS_DB` is per-process and the process here is a child.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -52,7 +52,7 @@ fn start_stub(replies: Vec<(u16, String)>) -> (mpsc::Receiver<String>, u16) {
     (seen, port)
 }
 
-/// A live `issue-mcp`, already through the handshake.
+/// A live `issuers-mcp`, already through the handshake.
 struct Session {
     child: Child,
     stdin: ChildStdin,
@@ -62,13 +62,13 @@ struct Session {
 
 impl Session {
     fn start(database: &std::path::Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_issue-mcp"))
-            .env("ISSUE_TRACKER_DB", database)
+        let mut child = Command::new(env!("CARGO_BIN_EXE_issuers-mcp"))
+            .env("ISSUERS_DB", database)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("launching issue-mcp");
+            .expect("launching issuers-mcp");
 
         let stdin = child.stdin.take().expect("stdin");
         let stdout = BufReader::new(child.stdout.take().expect("stdout"));
@@ -138,7 +138,7 @@ fn publish(directory: &std::path::Path, port: u16) {
 }
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let directory = std::env::temp_dir().join(format!("issue-mcp-{name}"));
+    let directory = std::env::temp_dir().join(format!("issuers-mcp-{name}"));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory

@@ -3356,21 +3356,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "issue-mcp"
-version = "0.1.1"
-dependencies = [
- "issue-tracker",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "issue-tracker"
+name = "issuers"
 version = "0.1.1"
 dependencies = [
  "anyhow",
@@ -3390,6 +3376,20 @@ dependencies = [
  "serde",
  "serde_json",
  "termcolor",
+]
+
+[[package]]
+name = "issuers-mcp"
+version = "0.1.1"
+dependencies = [
+ "issuers",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

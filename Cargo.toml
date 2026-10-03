@@ -1,37 +1,37 @@
 [package]
-name = "issue-tracker"
+name = "issuers"
 version = "0.1.1"
 edition = "2024"
 license = "GPL-3.0-only"
 # Two binaries, so `cargo run` needs telling which one it means.
-default-run = "Issues"
+default-run = "Issuers"
 
-# `issue-mcp` is a workspace member rather than a third `[[bin]]` here, so that
+# `issuers-mcp` is a workspace member rather than a third `[[bin]]` here, so that
 # its async runtime and MCP SDK are never compiled into this package — see
 # docs/adr/0009.
 [workspace]
-members = ["crates/issue-mcp"]
+members = ["crates/issuers-mcp"]
 
 # The shared core: domain rules, storage, the projection and the HTTP API.
 # It deliberately does not contain `ui` or `app_state`, so nothing in here can
 # reach back into the view — see docs/adr/0008. The name matches the package's
-# own, but is written out because every `use issue_tracker::` in `src/ui/`
+# own, but is written out because every `use issuers::` in `src/ui/`
 # depends on it, not on whatever the package is called this week.
 [lib]
-name = "issue_tracker"
+name = "issuers"
 path = "src/lib.rs"
 
 # macOS titles the application menu from the process name, ignoring the name
 # given to the first `Menu`. Naming the binary is what makes the menu bar read
-# "Issues" rather than the crate name — short of shipping an .app bundle.
+# "Issuers" rather than the crate name — short of shipping an .app bundle.
 [[bin]]
-name = "Issues"
+name = "Issuers"
 path = "src/main.rs"
 
 # The command-line surface. A client of the API above, not a second writer.
 [[bin]]
-name = "issue"
-path = "src/bin/issue.rs"
+name = "issuers-cli"
+path = "src/bin/issuers-cli.rs"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }

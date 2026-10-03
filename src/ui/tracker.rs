@@ -22,8 +22,8 @@ use gpui_component::select::{SelectEvent, SelectState};
 use super::preferences::Preferences;
 use super::theme_catalogue::{ThemeCatalogue, ThemeListDelegate};
 use super::working_state::WorkingState;
-use issue_tracker::domain::{Issue, IssueId, Priority, Status, Tag, View};
-use issue_tracker::projection::{IssuePatch, Projection, Written};
+use issuers::domain::{Issue, IssueId, Priority, Status, Tag, View};
+use issuers::projection::{IssuePatch, Projection, Written};
 
 /// The Tag editor in the detail pane. Tags are plain names, so the delegate is
 /// the library's own `SearchableVec` and no custom one is needed.
@@ -76,7 +76,7 @@ const SAVE_DEBOUNCE: Duration = Duration::from_millis(400);
 pub(super) const LIST_CONTEXT: &str = "IssueList";
 
 actions!(
-    issue_tracker,
+    issuers,
     [
         SelectNext,
         SelectPrev,
@@ -101,7 +101,7 @@ actions!(
 /// Switches to a View. Carries its payload so one action serves all six menu
 /// items; `no_json` keeps `schemars` out of the dependency tree.
 #[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
-#[action(namespace = issue_tracker, no_json)]
+#[action(namespace = issuers, no_json)]
 pub struct ShowView {
     pub view: View,
 }
@@ -714,7 +714,7 @@ impl IssueTracker {
             // next time the selection moves.
             // Qualified: `gpui::Size` is in scope from the glob import, and
             // is a width-and-height, not this.
-            text => match text.parse::<issue_tracker::domain::Size>() {
+            text => match text.parse::<issuers::domain::Size>() {
                 Ok(size) => patch.size(size),
                 Err(_) => patch,
             },

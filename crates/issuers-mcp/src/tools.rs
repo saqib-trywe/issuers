@@ -10,9 +10,9 @@
 //!
 //! There is deliberately no `delete_issue`. See `docs/adr/0009`.
 
-use issue_tracker::api::wire::{NewIssue, PatchIssue};
-use issue_tracker::domain::{Narrowing, ParentFilter, Tag, View};
-use issue_tracker::operations;
+use issuers::api::wire::{NewIssue, PatchIssue};
+use issuers::domain::{Narrowing, ParentFilter, Tag, View};
+use issuers::operations;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
@@ -201,7 +201,7 @@ impl ServerHandler for Issues {
         info.protocol_version = ProtocolVersion::LATEST;
         // `Implementation::from_build_env` would report the SDK's own name,
         // since its `env!` is expanded where the SDK was compiled.
-        info.server_info = Implementation::new("issue-tracker", env!("CARGO_PKG_VERSION"));
+        info.server_info = Implementation::new("issuers", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(INSTRUCTIONS.to_string());
         info
     }

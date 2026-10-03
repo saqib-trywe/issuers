@@ -22,7 +22,7 @@ tested, so reusing them costs one migration and two methods.
 
 The database is no longer exclusively about Issues, which slightly widens the
 scope ADR-0002 describes. In exchange there remains exactly one file to back
-up, one thing to point `ISSUE_TRACKER_DB` at, and one persistence path to
+up, one thing to point `ISSUERS_DB` at, and one persistence path to
 reason about.
 
 This is cheap to reverse if it stops paying: the table is one migration and the

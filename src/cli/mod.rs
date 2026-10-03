@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! `issue` — the command-line surface.
+//! `issuers-cli` — the command-line surface.
 //!
 //! A *client* of the local HTTP API, never a second writer: everything goes
 //! through the running app, so the window's projection and the database can
@@ -34,10 +34,10 @@ fn help() -> String {
 
     format!(
         "\
-issue — the command line for the Issues tracker
+issuers-cli — the command line for the Issuers tracker
 
 USAGE
-  issue <command> [options]
+  issuers-cli <command> [options]
 
 COMMANDS
   list                        List issues, most pressing first
@@ -62,7 +62,7 @@ NEW AND SET OPTIONS
   --priority <priority>       {priorities}
   --size <n|none>             Relative size, 0-255. `none` unsizes; `new`
                               takes a number only
-  --tag <name>                new only, repeatable. Use `issue tag` to change
+  --tag <name>                new only, repeatable. Use `issuers-cli tag` to change
                               the tags of an issue that already exists
   --parent <id>               new only
 
@@ -75,7 +75,7 @@ GLOBAL OPTIONS
 Status and priority names are case-insensitive. Deleting is permanent; to
 record that you decided against an issue instead, use --status Cancelled.
 
-Issues must be running: `issue` talks to it over a local HTTP API rather than
+Issuers must be running: `issuers-cli` talks to it over a local HTTP API rather than
 opening the database itself.
 ",
         statuses = statuses.join(", "),
@@ -152,7 +152,7 @@ pub fn run(argv: Vec<OsString>) -> u8 {
     match run_into(argv, &mut out) {
         Ok(()) => 0,
         Err(failure) => {
-            eprintln!("issue: {}", failure.message());
+            eprintln!("issuers-cli: {}", failure.message());
             failure.code()
         }
     }
@@ -267,7 +267,7 @@ fn dispatch(
 /// Applies one request per named thing, in order.
 ///
 /// A refusal partway through leaves the earlier ones applied, so the error
-/// says which landed — otherwise `issue tag add 7 a b c` failing on `b` looks
+/// says which landed — otherwise `issuers-cli tag add 7 a b c` failing on `b` looks
 /// like it did nothing.
 fn each(
     client: &Client,
@@ -333,7 +333,7 @@ fn remove(
         };
         eprintln!(
             "#{} \u{201c}{}\u{201d} will be erased.{released}\n\
-             To abandon it but keep the record, use `issue set {} --status Cancelled`.",
+             To abandon it but keep the record, use `issuers-cli set {} --status Cancelled`.",
             issue.id, issue.title, issue.id
         );
         eprint!("Delete it? [y/N] ");
@@ -479,7 +479,7 @@ fn raw(out: &mut dyn WriteColor, reply: &Reply) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `issue list | head` closes the pipe early. That is the reader's decision,
+/// `issuers-cli list | head` closes the pipe early. That is the reader's decision,
 /// not an error worth reporting.
 fn broken_pipe(err: std::io::Error) -> Failure {
     if err.kind() == std::io::ErrorKind::BrokenPipe {
