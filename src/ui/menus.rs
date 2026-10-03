@@ -14,7 +14,7 @@ use super::tracker::{
     CloseWindow, CreateIssue, DeleteIssue, Hide, HideOthers, Minimize, Quit, ShowView,
     ToggleSidebar, Zoom,
 };
-use issue_tracker::domain::View;
+use issuers::domain::View;
 
 /// Installs the menu bar for the given active View.
 ///
@@ -23,12 +23,12 @@ use issue_tracker::domain::View;
 pub fn rebuild(active: View, cx: &mut App) {
     cx.set_menus([
         // On macOS the first menu is the application menu, and its name is
-        // what appears in bold next to the Apple logo. Ours reads "Issues"
+        // what appears in bold next to the Apple logo. Ours reads "Issuers"
         // rather than the binary name because of this.
-        Menu::new("Issues").items([
+        Menu::new("Issuers").items([
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
-            MenuItem::action("Hide Issues", Hide),
+            MenuItem::action("Hide Issuers", Hide),
             MenuItem::action("Hide Others", HideOthers),
             MenuItem::separator(),
             MenuItem::action("Quit Issues", Quit),

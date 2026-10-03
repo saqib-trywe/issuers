@@ -8,7 +8,7 @@
 //! exit codes it maps failures onto. There is deliberately no test here that
 //! needs the application window — a suite that needs a GUI stops being run.
 //!
-//! It is one `#[test]` on purpose. `ISSUE_TRACKER_DB` is process-wide state,
+//! It is one `#[test]` on purpose. `ISSUERS_DB` is process-wide state,
 //! and cargo runs the tests in a file on parallel threads.
 
 use std::io::{Read, Write};
@@ -16,7 +16,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 
-use issue_tracker::cli::{self, Failure};
+use issuers::cli::{self, Failure};
 use termcolor::Buffer;
 
 /// One canned exchange: what the stub should reply with next.
@@ -86,7 +86,7 @@ fn the_cli_end_to_end() {
     std::fs::create_dir_all(&dir).expect("scratch directory");
     let db = dir.join("issues.db");
     // Safety: this test file is a process of its own and runs one test.
-    unsafe { std::env::set_var("ISSUE_TRACKER_DB", &db) };
+    unsafe { std::env::set_var("ISSUERS_DB", &db) };
 
     // ---- the app is not running ---------------------------------------------
     let _ = std::fs::remove_file(dir.join("api.json"));

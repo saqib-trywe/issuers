@@ -8,7 +8,7 @@
 
 use gpui_component::ColorName;
 
-use issue_tracker::domain::Tag;
+use issuers::domain::Tag;
 
 /// FNV-1a, 64-bit.
 ///

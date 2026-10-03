@@ -6,7 +6,7 @@
 //! single writer over both, `api` exposes them over HTTP and `cli` consumes
 //! that API from a terminal. None of them may depend on `gpui`.
 //!
-//! The view lives in the `Issues` binary rather than here, which is what makes
+//! The view lives in the `Issuers` binary rather than here, which is what makes
 //! that rule structural: nothing in this library can name `ui` or
 //! `app_state`. See `docs/adr/0008`.
 

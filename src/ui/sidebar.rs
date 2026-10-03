@@ -11,7 +11,7 @@ use gpui_component::{ActiveTheme, Sizable};
 use super::tag_colour::colour_for;
 use super::theme_catalogue::ThemeListDelegate;
 use super::tracker::IssueTracker;
-use issue_tracker::domain::{Narrowing, Tag, View};
+use issuers::domain::{Narrowing, Tag, View};
 
 impl IssueTracker {
     pub(super) fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

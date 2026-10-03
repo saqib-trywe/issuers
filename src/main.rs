@@ -6,9 +6,9 @@ mod ui;
 use gpui::*;
 use gpui_component::Root;
 
-use issue_tracker::domain;
-use issue_tracker::projection::Projection;
-use issue_tracker::store::Store;
+use issuers::domain;
+use issuers::projection::Projection;
+use issuers::store::Store;
 use ui::IssueTracker;
 
 /// Opens the main window.
@@ -25,7 +25,7 @@ fn open_main_window(cx: &mut App) {
     let opened = cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("Issues".into()),
+                title: Some("Issuers".into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds {

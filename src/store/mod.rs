@@ -20,7 +20,17 @@ use crate::domain::{Issue, IssueId, Tag};
 
 /// Points the store at a scratch database during development so experiments
 /// never touch real data.
-pub const DB_PATH_ENV: &str = "ISSUE_TRACKER_DB";
+pub const DB_PATH_ENV: &str = "ISSUERS_DB";
+
+/// What [`DB_PATH_ENV`] was called before the project was renamed. Still
+/// honoured, beneath the new name, so a shell profile or an MCP client config
+/// written against it keeps pointing at the scratch database it meant rather
+/// than quietly falling through to the real one.
+pub const LEGACY_DB_PATH_ENV: &str = "ISSUE_TRACKER_DB";
+
+/// The platform data directory's name, and the one it had before the rename.
+const DATA_DIR_NAME: &str = "issuers";
+const LEGACY_DATA_DIR_NAME: &str = "issue-tracker";
 
 const SELECT_COLUMNS: &str =
     "id, title, body, status, priority, created_at, updated_at, parent_id, size";
@@ -33,6 +43,9 @@ impl Store {
     /// Opens the database at [`db_path`], creating parent directories and
     /// applying migrations.
     pub fn open() -> Result<Self> {
+        if !db_path_overridden() {
+            migrate_legacy_data_dir()?;
+        }
         let path = db_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -245,16 +258,60 @@ pub mod settings_keys {
     pub const UI_TAG: &str = "ui.tag";
 }
 
-/// The database file location: `$ISSUE_TRACKER_DB` when set, otherwise the
-/// platform data directory.
+/// The database file location: `$ISSUERS_DB` when set, then the legacy
+/// `$ISSUE_TRACKER_DB`, otherwise the platform data directory.
+///
+/// Only resolves; it never touches the disk. The CLI and the MCP server call
+/// it to find `api.json`, and a client must not move the app's data about.
 pub fn db_path() -> Result<PathBuf> {
-    if let Some(override_path) = std::env::var_os(DB_PATH_ENV) {
-        return Ok(PathBuf::from(override_path));
+    if let Some(override_path) = db_path_override() {
+        return Ok(override_path);
     }
+    Ok(data_dir(DATA_DIR_NAME)?.join("issues.db"))
+}
 
-    let dirs = directories::ProjectDirs::from("", "", "issue-tracker")
+fn db_path_override() -> Option<PathBuf> {
+    std::env::var_os(DB_PATH_ENV)
+        .or_else(|| std::env::var_os(LEGACY_DB_PATH_ENV))
+        .map(PathBuf::from)
+}
+
+fn db_path_overridden() -> bool {
+    db_path_override().is_some()
+}
+
+fn data_dir(name: &str) -> Result<PathBuf> {
+    let dirs = directories::ProjectDirs::from("", "", name)
         .context("locating the platform data directory")?;
-    Ok(dirs.data_dir().join("issues.db"))
+    Ok(dirs.data_dir().to_path_buf())
+}
+
+/// Carries the data directory across the rename from `issue-tracker`, once.
+///
+/// Without it the first launch after the rename opens a fresh, empty database
+/// beside the old one, and every Issue looks deleted.
+fn migrate_legacy_data_dir() -> Result<()> {
+    move_data_dir(&data_dir(LEGACY_DATA_DIR_NAME)?, &data_dir(DATA_DIR_NAME)?)
+}
+
+/// Renames `legacy` to `current` when only the former exists. Once `current`
+/// exists it wins and `legacy` is left alone: guessing which of two databases
+/// is the real one is the person's call, not the app's.
+fn move_data_dir(legacy: &Path, current: &Path) -> Result<()> {
+    if current.exists() || !legacy.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = current.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::rename(legacy, current).with_context(|| {
+        format!(
+            "moving the data directory from {} to {}",
+            legacy.display(),
+            current.display()
+        )
+    })
 }
 
 /// Where the API publishes its port and token, beside the database so the two
@@ -620,12 +677,74 @@ mod tests {
 
     #[test]
     fn env_override_takes_precedence_over_platform_dir() {
-        // Guards the dev-safety property: with the override set, we never
-        // resolve to the real data directory.
+        // Guards the dev-safety property: with either override set, we never
+        // resolve to the real data directory — and the new name wins. One
+        // test, because the environment is process-wide.
+        unsafe { std::env::set_var(LEGACY_DB_PATH_ENV, "/tmp/legacy-issues.db") };
+        let legacy = db_path().unwrap();
         unsafe { std::env::set_var(DB_PATH_ENV, "/tmp/scratch-issues.db") };
-        let path = db_path().unwrap();
+        let both = db_path().unwrap();
         unsafe { std::env::remove_var(DB_PATH_ENV) };
+        unsafe { std::env::remove_var(LEGACY_DB_PATH_ENV) };
 
-        assert_eq!(path, PathBuf::from("/tmp/scratch-issues.db"));
+        assert_eq!(legacy, PathBuf::from("/tmp/legacy-issues.db"));
+        assert_eq!(both, PathBuf::from("/tmp/scratch-issues.db"));
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("issuers-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_legacy_data_dir_moves_when_there_is_no_new_one() {
+        let root = scratch_dir("migrate");
+        let (legacy, current) = (root.join("issue-tracker"), root.join("issuers"));
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(legacy.join("issues.db"), "old").unwrap();
+
+        move_data_dir(&legacy, &current).unwrap();
+
+        assert!(!legacy.exists());
+        assert_eq!(
+            std::fs::read_to_string(current.join("issues.db")).unwrap(),
+            "old"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_existing_new_data_dir_is_never_overwritten() {
+        let root = scratch_dir("keep");
+        let (legacy, current) = (root.join("issue-tracker"), root.join("issuers"));
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(legacy.join("issues.db"), "old").unwrap();
+        std::fs::create_dir(&current).unwrap();
+        std::fs::write(current.join("issues.db"), "new").unwrap();
+
+        move_data_dir(&legacy, &current).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("issues.db")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(current.join("issues.db")).unwrap(),
+            "new"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn no_legacy_data_dir_means_nothing_to_do() {
+        let root = scratch_dir("fresh");
+        let current = root.join("issuers");
+
+        move_data_dir(&root.join("issue-tracker"), &current).unwrap();
+
+        assert!(!current.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

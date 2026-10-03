@@ -13,7 +13,7 @@
 //! `ThemeCatalogue`'s subject; what was chosen is this one's.
 
 use gpui_component::ThemeMode;
-use issue_tracker::store::settings_keys;
+use issuers::store::settings_keys;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Preferences {

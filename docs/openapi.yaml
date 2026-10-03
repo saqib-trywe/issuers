@@ -3,14 +3,14 @@ openapi: 3.1.0
 info:
   title: Issues — local HTTP API
   version: 0.1.1
-  summary: The local API of the `Issues` desktop app, served only while the app is running.
+  summary: The local API of the `Issuers` desktop app, served only while the app is running.
   license:
     name: GNU General Public License v3.0 only
     identifier: GPL-3.0-only
 
   description: |
-    A small HTTP/1.1 API over loopback, exposed by the `Issues` desktop
-    application so scripts and the `issue` CLI can read and change the same
+    A small HTTP/1.1 API over loopback, exposed by the `Issuers` desktop
+    application so scripts and the `issuers-cli` CLI can read and change the same
     Issues the window is showing. It is **not** a general-purpose service:
 
     * It exists only while the app is running. There is no daemon, and no
@@ -48,8 +48,8 @@ info:
     ```
 
     On macOS that is
-    `~/Library/Application Support/issue-tracker/api.json`, or beside
-    whatever `ISSUE_TRACKER_DB` names. Port 8787 is only preferred: if it is
+    `~/Library/Application Support/issuers/api.json`, or beside
+    whatever `ISSUERS_DB` names. Port 8787 is only preferred: if it is
     taken, an ephemeral port is used, which is why the file is authoritative.
 
     A file that exists when the app does not is stale — `api.json` is removed

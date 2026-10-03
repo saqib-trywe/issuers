@@ -8,7 +8,7 @@
 //! `Connection: close` and serves one request per connection, so end-of-stream
 //! delimits the body and there is no keep-alive bookkeeping either.
 //!
-//! Shared by every client of the API — the `issue` command and the MCP server
+//! Shared by every client of the API — the `issuers-cli` command and the MCP server
 //! both reach the app through here, and neither reaches the database. It knows
 //! only what the transport can tell it apart: whether there was an app to talk
 //! to. What a caller *does* about that — an exit code, a tool error — is the
@@ -102,7 +102,7 @@ pub fn connect() -> Result<Client, ClientError> {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(ClientError::not_running(
-                "Issues is not running. Open it and try again.".to_string(),
+                "Issuers is not running. Open it and try again.".to_string(),
             ));
         }
         Err(err) => {
@@ -138,7 +138,7 @@ impl Client {
                 std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
             ) {
                 ClientError::not_running(
-                    "Issues is not running — it left a stale address file behind. \
+                    "Issuers is not running — it left a stale address file behind. \
                      Open it and try again."
                         .to_string(),
                 )
@@ -216,14 +216,14 @@ mod tests {
     fn the_error_says_only_what_the_transport_can_tell_apart() {
         // Whether there was an app to talk to. What a caller does about it —
         // an exit code, a tool error — is the caller's business.
-        let gone = ClientError::not_running("Issues is not running.");
-        assert_eq!(gone.message(), "Issues is not running.");
-        assert_eq!(gone.to_string(), "Issues is not running.");
+        let gone = ClientError::not_running("Issuers is not running.");
+        assert_eq!(gone.message(), "Issuers is not running.");
+        assert_eq!(gone.to_string(), "Issuers is not running.");
         assert_eq!(
             ClientError::failed("the socket closed").message(),
             "the socket closed"
         );
-        assert_ne!(gone, ClientError::failed("Issues is not running."));
+        assert_ne!(gone, ClientError::failed("Issuers is not running."));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 # The CLI is a client of the running app
 
-`issue` talks to the local HTTP API over a socket rather than opening the
+`issuers-cli` talks to the local HTTP API over a socket rather than opening the
 SQLite database itself. When the app is not running it fails, with its own exit
-code (`3`) so a caller can tell "start Issues" apart from a genuine failure.
+code (`3`) so a caller can tell "start Issuers" apart from a genuine failure.
 
 This follows from ADR-0005. The projection is the single writer and lives in
 the application process; a CLI that opened the database directly would be a
@@ -28,12 +28,12 @@ window appear is intrusive, and a headless start mode is a separate feature.
 
 ## Consequences
 
-The crate gained a library, `issue_tracker`, holding `domain`, `store`,
-`projection`, `api` and `cli`. `ui` and `app_state` stay in the `Issues`
+The crate gained a library, `issuers`, holding `domain`, `store`,
+`projection`, `api` and `cli`. `ui` and `app_state` stay in the `Issuers`
 binary, which is what makes the module seam structural rather than a
 convention: nothing in the library can name the view. The CLI links no GPUI.
 
-`GET /issues` grew a `parent` filter to serve `issue list --parent`, keeping
+`GET /issues` grew a `parent` filter to serve `issuers-cli list --parent`, keeping
 the rule that the API can answer everything a surface can ask. `Status` and
 `Priority` parsing became case-insensitive, so `--status done` works — Tag
 identity already folded case, and matching labels exactly was the odd one out.

@@ -50,12 +50,12 @@ pub struct NewIssue {
     pub size: Option<Size>,
 }
 
-/// The fields `issue set` may change.
+/// The fields `issuers-cli set` may change.
 ///
 /// Deliberately without Tags. `PATCH {tags:[…]}` replaces the whole set, so
 /// changing one Tag through it means read-modify-write; the API grew
 /// `PUT`/`DELETE /issues/{id}/tags/{name}` precisely to avoid that, and
-/// `issue tag add|rm` is the only way in.
+/// `issuers-cli tag add|rm` is the only way in.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Changes {
     pub title: Option<String>,
@@ -147,8 +147,8 @@ pub fn colour_of(argv: &[OsString]) -> Colour {
 pub fn parse(argv: Vec<OsString>) -> Result<Invocation, Failure> {
     let mut args = pico_args::Arguments::from_vec(argv);
 
-    // Read anywhere in the line, so both `issue --json list` and
-    // `issue list --json` work.
+    // Read anywhere in the line, so both `issuers-cli --json list` and
+    // `issuers-cli list --json` work.
     let json = args.contains("--json");
     let colour = match value(&mut args, "--color")? {
         None => Colour::Auto,
@@ -205,7 +205,7 @@ pub fn parse(argv: Vec<OsString>) -> Result<Invocation, Failure> {
         "help" => Command::Help,
         other => {
             return Err(Failure::usage(format!(
-                "no such command: {other}. Try `issue --help`"
+                "no such command: {other}. Try `issuers-cli --help`"
             )));
         }
     };
@@ -264,7 +264,9 @@ fn new(mut args: pico_args::Arguments) -> Result<Command, Failure> {
     let mut free = rest(args, 1, "new")?;
     let title = free.remove(0);
     if title.trim().is_empty() {
-        return Err(Failure::usage("a title is required: issue new \"Title\""));
+        return Err(Failure::usage(
+            "a title is required: issuers-cli new \"Title\"",
+        ));
     }
 
     Ok(Command::New(Box::new(NewIssue {
@@ -281,7 +283,7 @@ fn new(mut args: pico_args::Arguments) -> Result<Command, Failure> {
 fn set(mut args: pico_args::Arguments) -> Result<Command, Failure> {
     let title = value(&mut args, "--title")?;
     // The API would refuse it too; saying so here makes it a bad command line
-    // (exit 2), as it is for `issue new`, rather than a failed request.
+    // (exit 2), as it is for `issuers-cli new`, rather than a failed request.
     if title
         .as_deref()
         .is_some_and(|title| title.trim().is_empty())
@@ -414,7 +416,7 @@ fn one_id(args: pico_args::Arguments, verb: &str) -> Result<IssueId, Failure> {
 ///
 /// This is also where unrecognised flags are caught. `pico-args` leaves
 /// anything it was never asked for in the remainder and is otherwise happy, so
-/// without this `issue set 7 --statuss Done` would report success and change
+/// without this `issuers-cli set 7 --statuss Done` would report success and change
 /// nothing.
 fn rest(args: pico_args::Arguments, wanted: usize, verb: &str) -> Result<Vec<String>, Failure> {
     let mut free = Vec::new();
@@ -432,7 +434,7 @@ fn rest(args: pico_args::Arguments, wanted: usize, verb: &str) -> Result<Vec<Str
     let long = !variadic && free.len() > wanted;
     if short || long {
         return Err(Failure::usage(format!(
-            "{verb} wants {wanted} argument(s), got {}. Try `issue --help`",
+            "{verb} wants {wanted} argument(s), got {}. Try `issuers-cli --help`",
             free.len()
         )));
     }
@@ -590,7 +592,7 @@ mod tests {
             panic!()
         };
         assert_eq!(new.tags.len(), 2);
-        // `set --tag` would mean read-modify-write; `issue tag` exists instead.
+        // `set --tag` would mean read-modify-write; `issuers-cli tag` exists instead.
         assert!(usage("set 7 --tag bug").contains("--tag"));
     }
 

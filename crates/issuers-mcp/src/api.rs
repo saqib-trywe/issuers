@@ -3,13 +3,13 @@
 //! The bridge to the running app.
 //!
 //! Everything an agent asks for arrives here as one [`Call`] — built by
-//! `issue_tracker::operations`, the same module the `issue` command builds its
+//! `issuers::operations`, the same module the `issuers-cli` command builds its
 //! requests with — and leaves as either the JSON the API sent or a sentence
 //! explaining why it did not. The tracker is never opened directly: this
 //! process is a client of the running app. See `docs/adr/0009`.
 
-use issue_tracker::client::{self, ClientError};
-use issue_tracker::operations::Call;
+use issuers::client::{self, ClientError};
+use issuers::operations::Call;
 use serde_json::Value;
 
 /// Sends one request, off the async runtime.

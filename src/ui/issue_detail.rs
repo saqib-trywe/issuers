@@ -16,7 +16,7 @@ use gpui_component::{ActiveTheme, Disableable, Icon, IconName, Sizable, WindowEx
 
 use super::tag_colour::colour_for;
 use super::tracker::IssueTracker;
-use issue_tracker::domain::{Issue, IssueId, Priority, Status, Tag};
+use issuers::domain::{Issue, IssueId, Priority, Status, Tag};
 
 impl IssueTracker {
     pub(super) fn render_issue_detail(
@@ -46,8 +46,7 @@ impl IssueTracker {
         let updated = issue.updated_at.format("%Y-%m-%d %H:%M").to_string();
         let progress = self.settled_progress(id, cx);
         let sub_issues = self.selected_sub_issues(cx);
-        let rollup =
-            issue_tracker::domain::SizeRollup::of(issue, &sub_issues.iter().collect::<Vec<_>>());
+        let rollup = issuers::domain::SizeRollup::of(issue, &sub_issues.iter().collect::<Vec<_>>());
         let parent = self.selected_parent(cx);
         let sub_issue_count = sub_issues.len();
 
@@ -142,7 +141,7 @@ impl IssueTracker {
     /// complete when it is a lower bound.
     fn render_size_row(
         &self,
-        rollup: issue_tracker::domain::SizeRollup,
+        rollup: issuers::domain::SizeRollup,
         parts: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {

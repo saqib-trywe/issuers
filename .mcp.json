@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "issues": {
-      "command": "issue-mcp",
+    "issuers": {
+      "command": "issuers-mcp",
       "args": [],
       "env": {}
     }
