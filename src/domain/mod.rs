@@ -11,7 +11,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 
 /// Issues are identified by a sequential integer, shown to the user as `#42`.
 pub type IssueId = i64;
@@ -315,6 +315,20 @@ pub fn display_title(title: &str) -> &str {
     }
 }
 
+/// A moment as a person reads it: on their own wall clock, to the minute.
+///
+/// Free-standing for the same reason as [`display_title`] — the window holds a
+/// `DateTime` and the CLI holds an RFC3339 string, and an Issue created at
+/// 09:23 has to read 09:23 in both. The window once formatted the stored UTC
+/// value directly, so the two disagreed by the local offset. Callers pass
+/// `&chrono::Local`; the zone is a parameter so tests can pin one.
+pub fn wall_clock<Tz: TimeZone>(at: DateTime<Utc>, zone: &Tz) -> String
+where
+    Tz::Offset: fmt::Display,
+{
+    at.with_timezone(zone).format("%Y-%m-%d %H:%M").to_string()
+}
+
 impl Issue {
     /// An Issue not yet filed: defaults everywhere but the title.
     ///
@@ -561,6 +575,25 @@ pub fn sort_for_display(issues: &mut [Issue]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wall_clock_reads_in_the_zone_it_is_given_not_in_utc() {
+        let at = DateTime::parse_from_rfc3339("2026-10-04T08:23:11.482913Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let bst = chrono::FixedOffset::east_opt(3600).unwrap();
+        assert_eq!(wall_clock(at, &bst), "2026-10-04 09:23");
+        assert_eq!(wall_clock(at, &Utc), "2026-10-04 08:23");
+    }
+
+    #[test]
+    fn wall_clock_crosses_midnight_with_the_zone() {
+        let at = DateTime::parse_from_rfc3339("2026-10-04T23:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let bst = chrono::FixedOffset::east_opt(3600).unwrap();
+        assert_eq!(wall_clock(at, &bst), "2026-10-05 00:30");
+    }
 
     /// A corpus for narrowing: distinct Statuses, Tags and parentage.
     fn corpus() -> Vec<Issue> {
