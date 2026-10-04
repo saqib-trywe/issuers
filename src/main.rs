@@ -50,7 +50,7 @@ fn open_main_window(cx: &mut App) {
 }
 
 fn main() {
-    let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
+    let app = gpui_platform::application().with_assets(gpui_kit_assets::Assets);
 
     // The app outlives its window, per macOS convention, so the Dock icon
     // needs to be able to bring one back. Registered on the builder rather

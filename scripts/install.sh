@@ -19,10 +19,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-# `--locked` because `gpui` and `gpui-component` are git dependencies: without
-# it a fresh resolve can install against a different upstream commit from the
-# one the tests just passed on, which is a difference you find out about at
-# runtime.
+# `--locked` because without it a fresh resolve can install against different
+# dependency versions from the ones the tests just passed on — `gpui-component`
+# in particular moves its API between minor releases — which is a difference
+# you find out about at runtime.
 #
 # `--force` so that re-running this replaces the binaries rather than declining
 # as already-installed. Iterating is the normal case.
