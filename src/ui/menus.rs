@@ -31,7 +31,7 @@ pub fn rebuild(active: View, cx: &mut App) {
             MenuItem::action("Hide Issuers", Hide),
             MenuItem::action("Hide Others", HideOthers),
             MenuItem::separator(),
-            MenuItem::action("Quit Issues", Quit),
+            MenuItem::action("Quit Issuers", Quit),
         ]),
         // These shortcuts already work — gpui-component's Input binds them in
         // the Input context. The menu exists for discoverability and so macOS

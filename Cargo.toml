@@ -15,8 +15,9 @@ members = ["crates/issuers-mcp"]
 # The shared core: domain rules, storage, the projection and the HTTP API.
 # It deliberately does not contain `ui` or `app_state`, so nothing in here can
 # reach back into the view — see docs/adr/0008. The name matches the package's
-# own, but is written out because every `use issuers::` in `src/ui/`
-# depends on it, not on whatever the package is called this week.
+# own, but is written out because every `use issuers::` in `src/ui/` and
+# `crates/issuers-mcp/` depends on it: renaming the package alone must not
+# rename the library, and renaming the library is a change to every importer.
 [lib]
 name = "issuers"
 path = "src/lib.rs"

@@ -43,7 +43,7 @@ impl Store {
     /// Opens the database at [`db_path`], creating parent directories and
     /// applying migrations.
     pub fn open() -> Result<Self> {
-        if !db_path_overridden() {
+        if db_path_override().is_none() {
             migrate_legacy_data_dir()?;
         }
         let path = db_path()?;
@@ -274,10 +274,6 @@ fn db_path_override() -> Option<PathBuf> {
     std::env::var_os(DB_PATH_ENV)
         .or_else(|| std::env::var_os(LEGACY_DB_PATH_ENV))
         .map(PathBuf::from)
-}
-
-fn db_path_overridden() -> bool {
-    db_path_override().is_some()
 }
 
 fn data_dir(name: &str) -> Result<PathBuf> {
