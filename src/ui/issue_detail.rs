@@ -42,8 +42,8 @@ impl IssueTracker {
         let status = issue.status;
         let priority = issue.priority;
         let tags = issue.tags.clone();
-        let created = issue.created_at.format("%Y-%m-%d %H:%M").to_string();
-        let updated = issue.updated_at.format("%Y-%m-%d %H:%M").to_string();
+        let created = issuers::domain::wall_clock(issue.created_at, &chrono::Local);
+        let updated = issuers::domain::wall_clock(issue.updated_at, &chrono::Local);
         let progress = self.settled_progress(id, cx);
         let sub_issues = self.selected_sub_issues(cx);
         let rollup = issuers::domain::SizeRollup::of(issue, &sub_issues.iter().collect::<Vec<_>>());

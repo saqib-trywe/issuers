@@ -5,11 +5,11 @@
 //! Pure with respect to the network: everything here takes already-fetched
 //! values, which is what makes it testable without a socket.
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use termcolor::{Color, ColorSpec, WriteColor};
 
 use crate::api::wire::{IssueJson, TagJson};
-use crate::domain::{Priority, Status, display_title};
+use crate::domain::{Priority, Status, display_title, wall_clock};
 
 /// How much of a title survives. Fixed rather than measured: fitting the
 /// terminal would mean a `TIOCGWINSZ` ioctl, and an `unsafe` block for column
@@ -210,10 +210,7 @@ fn width(text: &str) -> usize {
 /// RFC3339 with microseconds is right on the wire and noise on a screen.
 fn timestamp(raw: &str) -> String {
     match DateTime::parse_from_rfc3339(raw) {
-        Ok(at) => at
-            .with_timezone(&Local)
-            .format("%Y-%m-%d %H:%M")
-            .to_string(),
+        Ok(at) => wall_clock(at.with_timezone(&Utc), &Local),
         Err(_) => raw.to_string(),
     }
 }
