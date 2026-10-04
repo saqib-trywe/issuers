@@ -35,10 +35,15 @@ name = "issuers-cli"
 path = "src/bin/issuers-cli.rs"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+# gpui-component pins an exact `gpui-pre` snapshot of Zed's gpui, published to
+# crates.io weekly. Depending on Zed's git `main` instead puts a second `gpui`
+# in the tree whose types do not unify with the one gpui-component was built
+# against, so these four move together: bump the snapshot only to the one the
+# gpui-component release names in its own `Cargo.toml`.
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit"] }
+gpui-component = "0.7"
+gpui-kit-assets = "0.7"
 rust-embed = "8"
 anyhow = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
@@ -51,7 +56,7 @@ serde_json = "1.0.151"
 # same parser Zed uses for its own in-process HTTP server; nothing here needs
 # an async runtime. See docs/adr/0006.
 httparse = "1"
-getrandom = "0.3"
+getrandom = "0.4"
 async-channel = "2"
 # The CLI. Both were already in the lock file by way of the Zed tree, so
 # neither adds a compile unit. `pico-args` generates no help text; ours is

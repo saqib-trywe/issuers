@@ -15,7 +15,7 @@ use issuers::domain::{Narrowing, ParentFilter, Tag, View};
 use issuers::operations;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities, ServerConfig,
 };
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::{Value, json};
@@ -196,8 +196,8 @@ impl Issues {
 
 #[tool_handler]
 impl ServerHandler for Issues {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.protocol_version = ProtocolVersion::LATEST;
         // `Implementation::from_build_env` would report the SDK's own name,
         // since its `env!` is expanded where the SDK was compiled.
