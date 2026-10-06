@@ -47,8 +47,8 @@ info:
     { "port": 8787, "token": "…64 hex characters…" }
     ```
 
-    On macOS that is
-    `~/Library/Application Support/issuers/api.json`, or beside
+    By default that is `~/.config/issuers/api.json`
+    (`$XDG_CONFIG_HOME/issuers/api.json` when that is set), or beside
     whatever `ISSUERS_DB` names. Port 8787 is only preferred: if it is
     taken, an ephemeral port is used, which is why the file is authoritative.
 
