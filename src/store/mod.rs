@@ -10,6 +10,7 @@
 mod migrations;
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -28,9 +29,12 @@ pub const DB_PATH_ENV: &str = "ISSUERS_DB";
 /// than quietly falling through to the real one.
 pub const LEGACY_DB_PATH_ENV: &str = "ISSUE_TRACKER_DB";
 
-/// The platform data directory's name, and the one it had before the rename.
+/// The data directory's name, and the one it had before the rename.
 const DATA_DIR_NAME: &str = "issuers";
 const LEGACY_DATA_DIR_NAME: &str = "issue-tracker";
+
+/// Where the data directory lives when set, per the XDG Base Directory spec.
+const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
 
 const SELECT_COLUMNS: &str =
     "id, title, body, status, priority, created_at, updated_at, parent_id, size";
@@ -44,7 +48,7 @@ impl Store {
     /// applying migrations.
     pub fn open() -> Result<Self> {
         if db_path_override().is_none() {
-            migrate_legacy_data_dir()?;
+            migrate_legacy_data_dirs()?;
         }
         let path = db_path()?;
         if let Some(parent) = path.parent() {
@@ -259,7 +263,7 @@ pub mod settings_keys {
 }
 
 /// The database file location: `$ISSUERS_DB` when set, then the legacy
-/// `$ISSUE_TRACKER_DB`, otherwise the platform data directory.
+/// `$ISSUE_TRACKER_DB`, otherwise the data directory.
 ///
 /// Only resolves; it never touches the disk. The CLI and the MCP server call
 /// it to find `api.json`, and a client must not move the app's data about.
@@ -267,7 +271,7 @@ pub fn db_path() -> Result<PathBuf> {
     if let Some(override_path) = db_path_override() {
         return Ok(override_path);
     }
-    Ok(data_dir(DATA_DIR_NAME)?.join("issues.db"))
+    Ok(data_dir()?.join("issues.db"))
 }
 
 fn db_path_override() -> Option<PathBuf> {
@@ -276,18 +280,54 @@ fn db_path_override() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn data_dir(name: &str) -> Result<PathBuf> {
-    let dirs = directories::ProjectDirs::from("", "", name)
-        .context("locating the platform data directory")?;
-    Ok(dirs.data_dir().to_path_buf())
+/// `$XDG_CONFIG_HOME/issuers`, which is `~/.config/issuers` when that is unset.
+///
+/// The same on every platform rather than the platform data directory, so the
+/// database is somewhere a person looks — see docs/adr/0013.
+fn data_dir() -> Result<PathBuf> {
+    let base = directories::BaseDirs::new().context("locating the home directory")?;
+    Ok(data_dir_in(
+        std::env::var_os(XDG_CONFIG_HOME_ENV),
+        base.home_dir(),
+    ))
 }
 
-/// Carries the data directory across the rename from `issue-tracker`, once.
+/// The XDG spec says a relative `$XDG_CONFIG_HOME` is invalid and should be
+/// ignored, and an empty one means unset.
+fn data_dir_in(xdg_config_home: Option<OsString>, home: &Path) -> PathBuf {
+    xdg_config_home
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.join(".config"))
+        .join(DATA_DIR_NAME)
+}
+
+/// Where earlier versions kept the data directory, newest first: the platform
+/// data directory (`~/Library/Application Support/` on macOS) under the
+/// current name, then under the name before the rename.
+fn legacy_data_dirs() -> Vec<PathBuf> {
+    [DATA_DIR_NAME, LEGACY_DATA_DIR_NAME]
+        .into_iter()
+        .filter_map(|name| directories::ProjectDirs::from("", "", name))
+        .map(|dirs| dirs.data_dir().to_path_buf())
+        .collect()
+}
+
+/// Carries an old install's data directory across, once.
 ///
-/// Without it the first launch after the rename opens a fresh, empty database
+/// Without it the first launch after a move opens a fresh, empty database
 /// beside the old one, and every Issue looks deleted.
-fn migrate_legacy_data_dir() -> Result<()> {
-    move_data_dir(&data_dir(LEGACY_DATA_DIR_NAME)?, &data_dir(DATA_DIR_NAME)?)
+fn migrate_legacy_data_dirs() -> Result<()> {
+    move_newest_data_dir(&legacy_data_dirs(), &data_dir()?)
+}
+
+/// Moves the first of `legacy` that exists to `current`. The rest are then
+/// left alone by [`move_data_dir`], because `current` exists.
+fn move_newest_data_dir(legacy: &[PathBuf], current: &Path) -> Result<()> {
+    for dir in legacy {
+        move_data_dir(dir, current)?;
+    }
+    Ok(())
 }
 
 /// Renames `legacy` to `current` when only the former exists. Once `current`
@@ -731,6 +771,60 @@ mod tests {
             "new"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn only_the_newest_legacy_data_dir_moves() {
+        let root = scratch_dir("newest");
+        let (newer, older) = (root.join("support-issuers"), root.join("issue-tracker"));
+        let current = root.join("config").join("issuers");
+        for (dir, contents) in [(&newer, "newer"), (&older, "older")] {
+            std::fs::create_dir(dir).unwrap();
+            std::fs::write(dir.join("issues.db"), contents).unwrap();
+        }
+
+        move_newest_data_dir(&[newer.clone(), older.clone()], &current).unwrap();
+
+        assert!(!newer.exists());
+        assert_eq!(
+            std::fs::read_to_string(current.join("issues.db")).unwrap(),
+            "newer"
+        );
+        assert_eq!(
+            std::fs::read_to_string(older.join("issues.db")).unwrap(),
+            "older"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_data_dir_defaults_to_dot_config() {
+        let home = Path::new("/Users/someone");
+        assert_eq!(
+            data_dir_in(None, home),
+            Path::new("/Users/someone/.config/issuers")
+        );
+    }
+
+    #[test]
+    fn xdg_config_home_moves_the_data_dir() {
+        let home = Path::new("/Users/someone");
+        assert_eq!(
+            data_dir_in(Some("/elsewhere".into()), home),
+            Path::new("/elsewhere/issuers")
+        );
+    }
+
+    #[test]
+    fn an_empty_or_relative_xdg_config_home_is_ignored() {
+        let home = Path::new("/Users/someone");
+        for value in ["", "relative/config"] {
+            assert_eq!(
+                data_dir_in(Some(value.into()), home),
+                Path::new("/Users/someone/.config/issuers"),
+                "{value:?}"
+            );
+        }
     }
 
     #[test]

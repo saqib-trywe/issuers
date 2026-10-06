@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-only
 #
-# Builds and installs everything this repository ships, to ~/.cargo/bin.
+# Builds and installs everything this repository ships, to ~/.local/bin.
 #
 # There are two installs rather than one, and that is the whole reason this
 # script exists. `cargo install --path .` installs the root package's binaries
@@ -19,6 +19,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
+# `cargo install --root R` writes binaries to `R/bin`, so this is ~/.local/bin
+# — the user binary directory of the XDG spec, rather than Cargo's own. Cargo
+# also keeps its record of what it installed in `R/.crates.toml` and
+# `R/.crates2.json`, so uninstalling needs the same root:
+# `cargo uninstall --root ~/.local issuers`.
+root="$HOME/.local"
+bin_dir="$root/bin"
+
 # `--locked` because without it a fresh resolve can install against different
 # dependency versions from the ones the tests just passed on — `gpui-component`
 # in particular moves its API between minor releases — which is a difference
@@ -27,7 +35,7 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # `--force` so that re-running this replaces the binaries rather than declining
 # as already-installed. Iterating is the normal case.
 install_from() {
-    cargo install --path "$1" --locked --force
+    cargo install --path "$1" --root "$root" --locked --force
 }
 
 say "Installing Issuers and issuers-cli (the app and the CLI)"
@@ -38,12 +46,20 @@ install_from crates/issuers-mcp
 
 # Report what actually landed, by resolving each name the way the things that
 # call them do. A successful `cargo install` followed by a binary that is not
-# on PATH is the other half of the same confusion.
+# on PATH is the other half of the same confusion — and so is one that *is*,
+# but resolves to an older copy earlier on PATH, such as one a previous version
+# of this script left in ~/.cargo/bin.
 say "Installed"
 missing=0
+shadowed=0
 for binary in Issuers issuers-cli issuers-mcp; do
     if path="$(command -v "$binary" 2>/dev/null)"; then
-        printf '  %-12s %s\n' "$binary" "$path"
+        if [ "$path" = "$bin_dir/$binary" ]; then
+            printf '  %-12s %s\n' "$binary" "$path"
+        else
+            printf '  %-12s %s  (SHADOWS %s)\n' "$binary" "$path" "$bin_dir/$binary"
+            shadowed=1
+        fi
     else
         printf '  %-12s NOT ON PATH\n' "$binary"
         missing=1
@@ -53,10 +69,26 @@ done
 if [ "$missing" -ne 0 ]; then
     cat >&2 <<'HINT'
 
-Something installed but is not resolvable by name. `cargo install` writes to
-~/.cargo/bin; add it to PATH:
+Something installed but is not resolvable by name. This script installs to
+~/.local/bin; add it to PATH:
 
-    export PATH="$HOME/.cargo/bin:$PATH"
+    export PATH="$HOME/.local/bin:$PATH"
+
+HINT
+    exit 1
+fi
+
+if [ "$shadowed" -ne 0 ]; then
+    cat >&2 <<'HINT'
+
+Something resolves to a copy other than the one just installed, so running it
+by name runs an old build. If the old one came from an earlier install to
+~/.cargo/bin, remove it:
+
+    cargo uninstall issuers
+    cargo uninstall issuers-mcp
+
+or put ~/.local/bin ahead of it on PATH.
 
 HINT
     exit 1
