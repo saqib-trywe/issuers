@@ -29,6 +29,10 @@ pub const DB_PATH_ENV: &str = "ISSUERS_DB";
 /// than quietly falling through to the real one.
 pub const LEGACY_DB_PATH_ENV: &str = "ISSUE_TRACKER_DB";
 
+/// The database's file name inside the data directory. Its presence is what
+/// makes a data directory hold an install rather than merely exist.
+const DB_FILE_NAME: &str = "issues.db";
+
 /// The data directory's name, and the one it had before the rename.
 const DATA_DIR_NAME: &str = "issuers";
 const LEGACY_DATA_DIR_NAME: &str = "issue-tracker";
@@ -271,7 +275,7 @@ pub fn db_path() -> Result<PathBuf> {
     if let Some(override_path) = db_path_override() {
         return Ok(override_path);
     }
-    Ok(data_dir()?.join("issues.db"))
+    Ok(data_dir()?.join(DB_FILE_NAME))
 }
 
 fn db_path_override() -> Option<PathBuf> {
@@ -321,8 +325,8 @@ fn migrate_legacy_data_dirs() -> Result<()> {
     move_newest_data_dir(&legacy_data_dirs(), &data_dir()?)
 }
 
-/// Moves the first of `legacy` that exists to `current`. The rest are then
-/// left alone by [`move_data_dir`], because `current` exists.
+/// Moves the first of `legacy` that holds anything to `current`. The rest are
+/// then left alone by [`move_data_dir`], because `current` holds a database.
 fn move_newest_data_dir(legacy: &[PathBuf], current: &Path) -> Result<()> {
     for dir in legacy {
         move_data_dir(dir, current)?;
@@ -330,24 +334,76 @@ fn move_newest_data_dir(legacy: &[PathBuf], current: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Renames `legacy` to `current` when only the former exists. Once `current`
-/// exists it wins and `legacy` is left alone: guessing which of two databases
-/// is the real one is the person's call, not the app's.
+/// Moves `legacy`'s contents to `current` unless `current` already holds a
+/// database. Once it does it wins and `legacy` is left alone: guessing which
+/// of two databases is the real one is the person's call, not the app's.
+///
+/// The test is the database, not the directory. An empty `current` — made by
+/// hand, or by anything else that writes under `~/.config` — would otherwise
+/// pass for an install, and the app would open a fresh database beside the
+/// real one.
 fn move_data_dir(legacy: &Path, current: &Path) -> Result<()> {
-    if current.exists() || !legacy.is_dir() {
+    if current.join(DB_FILE_NAME).exists() || !legacy.is_dir() {
         return Ok(());
     }
     if let Some(parent) = current.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    std::fs::rename(legacy, current).with_context(|| {
+    let moving = || {
         format!(
             "moving the data directory from {} to {}",
             legacy.display(),
             current.display()
         )
-    })
+    };
+    if !current.exists() {
+        match std::fs::rename(legacy, current) {
+            Ok(()) => return Ok(()),
+            // Another volume: fall through and move file by file.
+            Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => {}
+            Err(err) => return Err(err).with_context(moving),
+        }
+    }
+    move_entries(legacy, current).with_context(moving)
+}
+
+/// Moves each entry of `legacy` into `current`, the database last.
+///
+/// Last, so that an interrupted move leaves `current` without a database and
+/// the next launch finishes it — and so the database never arrives without
+/// its `-wal` file, whose committed transactions it would otherwise lose. A
+/// name already in `current` is refused rather than overwritten.
+fn move_entries(legacy: &Path, current: &Path) -> Result<()> {
+    std::fs::create_dir_all(current)?;
+    let mut entries = std::fs::read_dir(legacy)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|name| name == DB_FILE_NAME);
+    for name in entries {
+        let to = current.join(&name);
+        if to.exists() {
+            anyhow::bail!("{} is already there", to.display());
+        }
+        move_file(&legacy.join(&name), &to)?;
+    }
+    // Best-effort: an empty directory left behind is untidy, not wrong.
+    let _ = std::fs::remove_dir(legacy);
+    Ok(())
+}
+
+/// `rename`, or copy-then-remove when `from` and `to` are on different
+/// volumes, which `rename` cannot cross.
+fn move_file(from: &Path, to: &Path) -> Result<()> {
+    match std::fs::rename(from, to) {
+        Err(err) if err.kind() == std::io::ErrorKind::CrossesDevices => copy_then_remove(from, to),
+        result => result.with_context(|| format!("moving {}", from.display())),
+    }
+}
+
+fn copy_then_remove(from: &Path, to: &Path) -> Result<()> {
+    std::fs::copy(from, to).with_context(|| format!("copying {}", from.display()))?;
+    std::fs::remove_file(from).with_context(|| format!("removing {}", from.display()))
 }
 
 /// Where the API publishes its port and token, beside the database so the two
@@ -825,6 +881,83 @@ mod tests {
                 "{value:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_empty_new_data_dir_does_not_pass_for_an_install() {
+        let root = scratch_dir("empty-current");
+        let (legacy, current) = (root.join("issue-tracker"), root.join("issuers"));
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(legacy.join("issues.db"), "old").unwrap();
+        std::fs::write(legacy.join("issues.db-wal"), "wal").unwrap();
+        std::fs::create_dir(&current).unwrap();
+
+        move_data_dir(&legacy, &current).unwrap();
+
+        assert!(!legacy.exists());
+        assert_eq!(
+            std::fs::read_to_string(current.join("issues.db")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(current.join("issues.db-wal")).unwrap(),
+            "wal"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_new_data_dir_without_a_database_keeps_what_else_it_holds() {
+        let root = scratch_dir("other-files");
+        let (legacy, current) = (root.join("issue-tracker"), root.join("issuers"));
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(legacy.join("issues.db"), "old").unwrap();
+        std::fs::create_dir(&current).unwrap();
+        std::fs::write(current.join("notes.txt"), "mine").unwrap();
+
+        move_data_dir(&legacy, &current).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(current.join("issues.db")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(current.join("notes.txt")).unwrap(),
+            "mine"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_name_clash_is_refused_and_the_database_stays_behind() {
+        let root = scratch_dir("clash");
+        let (legacy, current) = (root.join("issue-tracker"), root.join("issuers"));
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(legacy.join("issues.db"), "old").unwrap();
+        std::fs::write(legacy.join("issues.db-wal"), "wal").unwrap();
+        std::fs::create_dir(&current).unwrap();
+        std::fs::write(current.join("issues.db-wal"), "someone else's").unwrap();
+
+        assert!(move_data_dir(&legacy, &current).is_err());
+
+        // The database moves last, so a refusal leaves it where it was and
+        // the next launch still sees nothing to open in `current`.
+        assert!(legacy.join("issues.db").exists());
+        assert!(!current.join("issues.db").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_then_remove_leaves_one_copy_at_the_destination() {
+        let root = scratch_dir("copy");
+        let (from, to) = (root.join("issues.db"), root.join("moved.db"));
+        std::fs::write(&from, "old").unwrap();
+
+        copy_then_remove(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "old");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

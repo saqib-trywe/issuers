@@ -2,8 +2,9 @@
 
 > **Since `docs/adr/0013`**, the data directory is `~/.config/issuers/`, not
 > the platform data directory, so the second shim below now moves
-> `…/issue-tracker/` (or `…/issuers/`) to `~/.config/issuers/`. The reasoning
-> here — move once, never merge, keep `db_path` pure — is unchanged.
+> `…/issue-tracker/` (or `…/issuers/`) to `~/.config/issuers/`, and "the new
+> one exists" now means "the new one holds a database". The reasoning here —
+> move once, never merge two databases, keep `db_path` pure — is unchanged.
 
 The project was renamed from `issue-tracker` to `issuers`, and unlike the
 rename before it, this one ships code to keep old installs working. Two shims:
