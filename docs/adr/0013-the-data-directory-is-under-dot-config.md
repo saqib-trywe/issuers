@@ -31,9 +31,10 @@ value is ignored, as the spec says.
 
 ## Consequences
 
-`Store::open` moves the newest existing legacy directory to the new one on
-first launch: `Application Support/issuers/` first, then
-`Application Support/issue-tracker/`. As in `docs/adr/0012`, it never moves
+`Store::open` moves the first legacy directory that exists to the new one on
+first launch, trying the more recent name first: `Application Support/issuers/`,
+then `Application Support/issue-tracker/`. The order is by name, not by
+modification time. As in `docs/adr/0012`, it never moves
 anything once the new directory exists, and never merges. Only the app moves
 it, so `db_path` keeps one answer for the CLI and the MCP server.
 
