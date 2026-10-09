@@ -40,10 +40,10 @@ path = "src/bin/issuers-cli.rs"
 # in the tree whose types do not unify with the one gpui-component was built
 # against, so these four move together: bump the snapshot only to the one the
 # gpui-component release names in its own `Cargo.toml`.
-gpui = { package = "gpui-pre", version = "=0.3.7" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit"] }
-gpui-component = "0.7"
-gpui-kit-assets = "0.7"
+gpui = { package = "gpui-pre", version = "=0.3.8" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = ["font-kit"] }
+gpui-component = "0.7.1"
+gpui-kit-assets = "0.7.1"
 rust-embed = "8"
 anyhow = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
