@@ -58,8 +58,9 @@ serde_json = "1.0.151"
 httparse = "1"
 getrandom = "0.4"
 async-channel = "2"
-# The CLI. Both were already in the lock file by way of the Zed tree, so
-# neither adds a compile unit. `pico-args` generates no help text; ours is
-# written by hand. See docs/adr/0008.
+# The CLI. `pico-args` was already in the lock file by way of the gpui tree,
+# so it adds no compile unit; `termcolor` was too until gpui moved to the
+# crates.io snapshot, and now is ours alone. `pico-args` generates no help
+# text; ours is written by hand. See docs/adr/0008.
 pico-args = "0.5"
 termcolor = "1"
