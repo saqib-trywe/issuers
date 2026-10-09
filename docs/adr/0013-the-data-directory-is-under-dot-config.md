@@ -35,7 +35,15 @@ value is ignored, as the spec says.
 first launch, trying the more recent name first: `Application Support/issuers/`,
 then `Application Support/issue-tracker/`. The order is by name, not by
 modification time. As in `docs/adr/0012`, it never moves
-anything once the new directory exists, and never merges. Only the app moves
+anything once the new directory holds a database, and never merges two
+databases. The test is the database rather than the directory: anything else
+that writes under `~/.config` could leave an empty `issuers/` there, and that
+would otherwise pass for an install and hide every Issue. Into an existing
+directory it moves the files one at a time, `issues.db` last, so that an
+interrupted move leaves no database behind and the next launch finishes it;
+a name already present is refused, not overwritten. `~/.config` can be on a
+different volume from `~/Library`, which `rename` cannot cross, so there it
+copies each file and removes the original. Only the app moves
 it, so `db_path` keeps one answer for the CLI and the MCP server.
 
 A copy of the app built before this change still looks in the old place.
